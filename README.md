@@ -69,7 +69,81 @@ OriGeneTools integrates over 500 tools to support target discovery and biomedica
 ## 5. Demo
 ![Image](assets/gif-1080.gif)
 
-## 6. Citing OriGene
+## 6. Getting Started
+
+1. **Deploy the MCP Server**  
+   OriGene relies on the MCP Server, which aggregates more than 600 bioinformatics tools. Follow the guidelines in  https://github.com/GENTEL-lab/OrigeneMCP.git to deploy the MCP service and record the server endpoint (for example,http://xxx.xx.xx.xx).
+
+2. **Configure OriGene**  
+   Edit `/local_deep_research/_settings/.secrets.toml` and fill in the MCP server URL together with your LLM API keys. Because OriGene is model-agnostic, you can freely switch between different base models or customize additional settings.
+
+```toml
+[mcp]          
+server_url = "Enter your mcp url"
+
+[embedding]          
+api_key = "Enter your api key (match url : https://api.siliconflow.cn/v1/embeddings)"
+cache   = "embedding_cache.pkl"
+
+[template]
+api_base = "https://ark.cn-beijing.volces.com/api/v3"
+api_key  = "Enter your api key"
+
+
+[openai]             
+api_base = "https://api.openai-proxy.org/v1"
+api_key  = "Enter your api key"
+
+[deepseek]          
+api_base = "https://api.deepseek.com"
+api_key  = "Enter your api key"
+```
+
+### Quick Start
+
+1. **Install dependencies**
+
+```bash
+uv sync
+```
+
+2. **Activate the virtual environment**
+
+```bash
+source ./.venv/bin/activate
+```
+
+3. **(Optional) Add the project root to `PYTHONPATH`**
+
+```bash
+export PYTHONPATH=$(pwd):$PYTHONPATH
+```
+
+### Command-Line Usage
+
+Launch the interactive assistant:
+
+```bash
+uv run -m local_deep_research.main
+```
+
+You will see a prompt similar to the following:
+
+```text
+Welcome to the Advanced Research System
+Type 'quit' to exit
+
+Select output type:
+1) Analysis (few minutes, answers questions, summarizes findings)
+2) Detailed Report (more time, generates a comprehensive report with deep analysis)
+Enter number (1 or 2):
+```
+
+After selecting an output type, enter your research query and OriGene will return the results.
+
+---
+
+## 7. Citing OriGene
 Any publication that discloses findings arising from using this source code, the model parameters or outputs produced by those should cite:
 ```
 @article{origene,
@@ -81,18 +155,18 @@ Any publication that discloses findings arising from using this source code, the
 }
 ```
 
-## 7. License
+## 8. License
 
 This code repository is licensed under [the Creative Commons Attribution-Non-Commercial ShareAlike International License, Version 4.0 (CC-BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/) (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at https://github.com/GENTEL-lab/OriGene/blob/main/LICENSE.
 
-## 8. Contact
+## 9. Contact
 
 If you have any questions, please raise an issue or contact us at [shuangjia.zheng@sjtu.edu.cn](mailto:shuangjia.zheng@sjtu.edu.cn) or [zhongyuezhang@sjtu.edu.cn](mailto:zhongyuezhang@sjtu.edu.cn).
 
-## 9. Acknowledgements
+## 10. Acknowledgements
 
 Thanks to DeepSeek, ChatGPT, Claude, and Gemini for providing powerful language models that made this project possible.
 
 Special thanks to the human experts who assisted us in benchmarking and evaluating the agent's performance!
 
-## The full source code is coming soon!
+
