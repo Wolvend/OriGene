@@ -72,7 +72,7 @@ OriGeneTools integrates over 500 tools to support target discovery and biomedica
 ## 6. Getting Started 
 
 1. **Deploy the MCP Server**  
-   OriGene relies on the MCP Server, which aggregates more than 600 bioinformatics tools. Follow the guidelines in  [Origene MCP](https://github.com/GENTEL-lab/OrigeneMCP.git) to deploy the MCP service and record the server endpoint (for example,http://xxx.xx.xx.xx).
+   OriGene relies on the MCP Server, which aggregates more than 600 bioinformatics tools. Follow the guidelines in  [Origene MCP](https://github.com/GENTEL-lab/OrigeneMCP.git) to deploy the MCP service and record the server endpoint (for example, http://127.0.0.1:8788).
 
 2. **Configure OriGene**  
    Edit `src/local_deep_research/_settings/.secrets.toml` and fill in the MCP server URL together with your LLM API keys. Because OriGene is model-agnostic, you can freely switch between different base models or customize additional settings.
