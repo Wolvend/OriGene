@@ -3,7 +3,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from .config import mcp_url
 
-NEW_ROOT_URL = mcp_url 
+MCP_SERVICE_URL = mcp_url 
 tool_packages = [
     "chembl_mcp",
     "kegg_mcp",
@@ -27,7 +27,7 @@ tool_packages = [
 mcp_servers = {
     package: {
         "transport": "streamable_http",
-        "url": f"{NEW_ROOT_URL}/{package}/mcp/",
+        "url": f"{MCP_SERVICE_URL}/{package}/mcp/",
     }
     for package in tool_packages
 }
