@@ -1,8 +1,8 @@
 # OriGene: A Self-Evolving Virtual Disease Biologist Automating Therapeutic Target Discovery
 
-> **Important**: This is the Beta release of OriGene, the self-evolving multi-agent system that acts as a virtual disease biologist.
+> **Important**: This is the OriGene, the self-evolving multi-agent system that acts as a virtual disease biologist.
 > We also introduce the TRQA Benchmark — a benchmark of 1,921 expert-level questions for evaluating biomedical AI agents.
-> We will continue to release updated code over time.
+> The product was launched at the 2025 WAIC!
 
 <p align="center">
   | <a href="https://gentel-lab.github.io/OriGene-Homepage">Homepage</a> |
