@@ -60,7 +60,7 @@ It spans domains such as fundamental biology, disease biology, pharmacology, and
 
 ![Image](assets/toolsets.jpg)
 
-OriGeneTools integrates over 500 tools to support target discovery and biomedical reasoning.
+OriGeneTools integrates over 600 tools to support target discovery and biomedical reasoning.
 
 - On the left, tools are grouped by **multi-omics domians** (e.g., genomics, transcriptomics, proteomics, phenomics, clinical evidence), highlighting OriGene’s ability to process biological data across scales.
 
