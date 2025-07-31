@@ -12,9 +12,11 @@
 </p>
 
 ## What's New -- July 2025
-1.Public online product – You can try OriGene at https://origene.lglab.ac.cn/.
-2.Open‑Source Release – The entire OriGene codebase is now available, Fork away!
-3.Officially unveiled at the 2025 World Artificial Intelligence Conference (WAIC).
+1.**Public online Launch** – OriGene is now live and available to try at https://origene.lglab.ac.cn/.
+
+2.**Open‑Source Release** – The entire OriGene codebase is now available, Fork away!
+
+3.Officially presented at the 2025 World Artificial Intelligence Conference (**WAIC**).
 
 
 ## 1. OriGene Overview
