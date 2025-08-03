@@ -133,6 +133,10 @@ class ToolEmbeddingRetriever:
         query_embedding = self.embedding_model.embed_query(query)
         query_embedding = np.array(query_embedding).reshape(1, -1)
         
+        # Check for NaN values in embeddings
+        if np.isnan(query_embedding).any() or np.isnan(self.all_tool_embedding).any():
+            raise ValueError("Embedding contains NaN, please check API response.")
+            
         # Calculate cosine similarity scores
         similarities = cosine_similarity(query_embedding, self.all_tool_embedding)[0]
         _tools = list(zip(self.tool_name_list, similarities))
@@ -225,6 +229,11 @@ class ToolEmbeddingRetriever:
             return [], []
         
         tool_embeddings = np.array(tool_embeddings)
+        
+        # Check for NaN values in embeddings
+        if np.isnan(query_embedding).any() or np.isnan(tool_embeddings).any():
+            raise ValueError("Embedding contains NaN, please check API response.")
+            
         similarities = cosine_similarity(query_embedding, tool_embeddings)[0]
         _tools = list(zip(available_tools, similarities))
         

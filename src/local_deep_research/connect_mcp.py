@@ -27,7 +27,7 @@ tool_packages = [
 mcp_servers = {
     package: {
         "transport": "streamable_http",
-        "url": f"{MCP_SERVICE_URL}/{package}/mcp/",
+        "url": f"{MCP_SERVICE_URL}/mcp_index/{package}/mcp/",
     }
     for package in tool_packages
 }
