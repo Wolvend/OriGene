@@ -7,7 +7,7 @@
 "What is the highest global development stage achieved by drugs targeting bacterial Top II for Crohn's disease up to April 2025, and which drugs are in this stage?",Phase II; OPS-2071
 "What is the highest global development stage achieved by drugs targeting RXR for metabolic dysfunction-associated steatohepatitis  up to April 2025, and which drugs are in this stage?",Phase I; ACT500
 "What is the highest global development stage achieved by drugs targeting A3R for metabolic dysfunction-associated steatohepatitis  up to April 2025, and which drugs are in this stage?","Phase II; namodenoson, FM101"
-"What is the highest global development stage achieved by drugs targeting CD40 for Crohn's disease up to April 2025, and which drugs are in this stage?",Phase I; ravagalimab
+"What is the highest global development stage achieved by drugs targeting CD40 for Crohn's disease up to April 2025, and which drugs are in this stage?",Preclinical; ravagalimab
 "What is the highest global development stage achieved by drugs targeting bacterial DHPS for Crohn's disease up to April 2025, and which drugs are in this stage?",Approved; sulfasalazine
 "What is the highest global development stage achieved by drugs targeting RANKL for Crohn's disease up to April 2025, and which drugs are in this stage?",Phase I/II; denosumab
 "What is the highest global development stage achieved by drugs targeting eotaxin-2 for metabolic dysfunction-associated steatohepatitis  up to April 2025, and which drugs are in this stage?",Phase II; nebokitug
@@ -679,3 +679,4 @@ What molecular targets and specific diseases are associated with the invention d
 What molecular targets and specific diseases are associated with the invention described in WO2024193689A1?,"TYK2; Scleroderma, Psoriasis, Autoimmune Diseases, Arthritis, Psoriatic, Crohn Disease, Rheumatoid Arthritis, Multiple Sclerosis, Lupus Nephritis, Vitiligo, Systemic Lupus Erythematosus, Colitis, Ulcerative, Dermatitis, Atopic"
 What molecular targets and specific diseases are associated with the invention described in WO2017148518A1?,"VAP-1; Kidney Diseases, Androgen-Insensitivity Syndrome, Nonalcoholic Steatohepatitis, Retinal Diseases"
 What molecular targets and specific diseases are associated with the invention described in WO2018217946A1?,"LRRK2; Alzheimer Disease, Acute Myeloid Leukemia, Leprosy, Hematologic Neoplasms, Neoplasms, Breast Cancer, Prostatic Cancer, Rheumatoid Arthritis, Kidney Neoplasms, Colitis, Ulcerative, Inflammatory Bowel Diseases, Dementia, Amyotrophic Lateral Sclerosis, Lung Cancer, Neurodegenerative Diseases, Multiple Myeloma, Crohn Disease, Ankylosing Spondylitis, Parkinson Disease, Dyskinesias"
+
