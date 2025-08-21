@@ -100,6 +100,34 @@ Enter number (1 or 2):
 
 After selecting an output type, enter your research query and OriGene will return the results.
 
+### Benchmark: Running and Scoring
+
+Run the benchmark to generate agent answers (you can use either command):
+
+```bash
+# From the project root (this directory), after activating the venv
+uv run -m local_deep_research.evaluate_local
+
+# Or using python
+python -m local_deep_research.evaluate_local
+```
+
+Then score the generated results (replace paths if you changed dataset/output names):
+
+```bash
+# Example: score TRQA-lit-choice core set results
+python local_deep_research/score_evaluation_results.py \
+  --agent_results benchmark/TRQA_lit_choice/agent_answers_test.txt \
+  --original_data benchmark/TRQA_lit_choice/TRQA-lit-choice-172-coreset.csv \
+  --model_name "OriAgent"
+
+# Or using uv
+uv run -m local_deep_research.score_evaluation_results \
+  --agent_results benchmark/TRQA_lit_choice/agent_answers_test.txt \
+  --original_data benchmark/TRQA_lit_choice/TRQA-lit-choice-172-coreset.csv \
+  --model_name "OriAgent"
+```
+
 ---
 
 
