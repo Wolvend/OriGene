@@ -11,10 +11,10 @@
   <a href="https://huggingface.co/datasets/GENTEL-Lab/TRQA/">Hugging Face Benchmark</a> |
 </p>
 
-## What's New -- July 2025
+## What's New -- Aug 2025
 1.**Public online Launch** – OriGene is now live and available to try at https://origene.lglab.ac.cn/.
 
-2.**Open‑Source Release** – The entire OriGene codebase is now available, Fork away!
+2.**Open‑Source Release** – The entire OriGene codebase and benchmark is now available, Fork away!
 
 3.Officially presented at the 2025 World Artificial Intelligence Conference (**WAIC**).
 
