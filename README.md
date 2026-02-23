@@ -2,16 +2,9 @@
 
 > **Important**: This is the OriGene, an open‑source, self-evolving multi-agent system that acts as a virtual disease biologist.
 > We also introduce the TRQA Benchmark — a benchmark of 1,921 expert-level questions for evaluating biomedical AI agents.
-> The product was launched at the 2025 WAIC!
 
-<p align="center">
-  | <a href="https://origene.lglab.ac.cn/">Try OriGene</a> |
-  <a href="https://www.biorxiv.org/content/10.1101/2025.06.03.657658v1.full.pdf">Paper</a> |
-  <a href="https://github.com/GENTEL-lab/OriGene">Code</a> |
-  <a href="https://huggingface.co/datasets/GENTEL-Lab/TRQA/">Hugging Face Benchmark</a> |
-</p>
 
-## What's New -- Aug 2025
+## What's New
 1.**Public online Launch** – OriGene is now live and available to try at https://origene.lglab.ac.cn/.
 
 2.**Open‑Source Release** – The entire OriGene codebase and benchmark is now available, Fork away!
@@ -20,20 +13,83 @@
 
 
 ## 1. OriGene Overview
-![Image](assets/OriGene_overview.jpg)
 Therapeutic target discovery remains one of the most critical yet intuition-driven stages in drug development. We present **OriGene**, a self-evolving multi-agent system that functions as a virtual disease biologist to 
 identify and prioritize therapeutic targets at scale. 
 
-## 2. Demo
-![Image](assets/gif-1080.gif)
 
-## 3. Getting Started 
+## 2. Getting Started
 
-1. **Deploy the MCP Server**  
-   OriGene relies on the MCP Server, which aggregates more than 600 bioinformatics tools. Follow the guidelines in  [Origene MCP](https://github.com/GENTEL-lab/OrigeneMCP.git) to deploy the MCP service and record the server endpoint (for example, http://127.0.0.1:8788).
+Running OriGene requires two components: the **MCP Server** (OrigeneMCP) and the **OriGene agent** itself. We recommend setting up the MCP Server first, then configuring and running OriGene.
 
-2. **Configure OriGene**  
-   Edit `src/local_deep_research/_settings/.secrets.toml` and fill in the MCP server URL together with your LLM API keys. Because OriGene is model-agnostic, you can freely switch between different base models or customize additional settings.
+### Step 1: Deploy the MCP Server
+
+OriGene relies on the MCP Server (OrigeneMCP), which aggregates more than 600 bioinformatics tools. The MCP server provides access to multiple databases including ChEMBL, PubChem, FDA, OpenTargets, NCBI, UniProt, PDB, Ensembl, UCSC, KEGG, STRING, TCGA, Monarch, ClinicalTrials, and more.
+
+**Step-by-step deployment:**
+
+a. **Clone the OrigeneMCP repository:**
+```bash
+git clone https://github.com/GENTEL-lab/OrigeneMCP.git
+cd OrigeneMCP
+```
+
+b. **Install dependencies (requires `uv` package manager):**
+```bash
+# Install uv if you haven't already
+pip install uv
+
+# Create virtual environment
+uv venv .venv --python=3.13
+source .venv/bin/activate
+
+# Install dependencies
+uv sync
+```
+
+c. **Deploy the MCP service:**
+```bash
+# Copy configuration file
+cp default.conf.toml local.conf.toml
+
+# (Optional) Configure API keys in local.conf.toml if you need:
+# - Tavily search: get your API key from https://tavily.com/
+# - Jina search: get your API key from https://jina.ai/
+
+# Deploy the service
+export PYTHONPATH=`fab pypath`
+uv run -m deploy.web
+```
+
+**Note:** 
+- The MCP server runs on port **8789** by default. If this port is occupied, modify the port in `local.conf.toml`.
+- Keep the MCP server running in a separate terminal while using OriGene.
+- The server endpoint will be `http://127.0.0.1:8789` (or your custom port).
+
+For more detailed information about OrigeneMCP deployment and usage, please refer to the [OrigeneMCP repository](https://github.com/GENTEL-lab/OrigeneMCP.git).
+
+---
+
+### Step 2: Configure and Run OriGene
+
+Both deployment methods require configuring API keys. Edit the configuration file `src/local_deep_research/_settings/.secrets.toml` and fill in your actual API keys and MCP server URL.
+
+OriGene is model-agnostic, so you can freely switch between different base models.
+
+**Note**: For LLM inference, you can configure either OpenAI/DeepSeek APIs or use CloseAI as a fallback. If OpenAI or DeepSeek is not configured, CloseAI will automatically be used instead. You can also configure all three if desired.
+
+#### API Key Configuration
+
+> **Important**: All third-party API keys must be obtained directly from the respective service providers. This project does not provide any API keys. Users are responsible for managing their own API credentials and complying with each provider's terms of service.
+
+| Service | Purpose | Registration |
+|---------|---------|--------------|
+| **SiliconFlow** | Text embedding | [siliconflow.cn](https://siliconflow.cn/) |
+| **Volcano Engine** | Template embedding | [volcengine.com](https://www.volcengine.com/) |
+| **OpenAI** | LLM inference | [openai.com](https://openai.com/) |
+| **DeepSeek** | Reasoning model | [platform.deepseek.com](https://platform.deepseek.com/) |
+| **CloseAI** | LLM inference (fallback for OpenAI/DeepSeek) | [closeai-asia.com](https://www.closeai-asia.com/) |
+
+Configuration template (`src/local_deep_research/_settings/.secrets.toml`):
 
 ```toml
 [mcp]          
@@ -49,58 +105,265 @@ api_key  = "Enter your api key"
 
 
 [openai]             
-api_base = "https://api.openai-proxy.org/v1"
+api_base = "https://api.openai.com/v1"
 api_key  = "Enter your api key"
 
-[deepseek]          
+[deepseek]
 api_base = "https://api.deepseek.com"
 api_key  = "Enter your api key"
+
+# CloseAI (optional, fallback for OpenAI and DeepSeek)
+# If OpenAI or DeepSeek API is not configured, CloseAI will be used as fallback
+# You can configure only CloseAI, or configure both CloseAI and OpenAI/DeepSeek
+[closeai]
+api_base = "https://api.openai-proxy.org/v1"
+api_key  = "Enter your api key"
 ```
 
-### Quick Start
+OriGene supports two deployment methods: **Docker** (recommended) and **Native Installation**. Choose the one that suits your environment.
 
-1. **Install dependencies**
+---
+
+#### Option A: Quick Start with Docker (Recommended)
+
+For the easiest setup experience, we provide Docker-based deployment that handles all dependencies automatically.
+
+**Prerequisites:**
+- Docker Engine 20.10 or higher
+- docker-compose 1.29 or higher
+- Get Docker: https://docs.docker.com/get-docker/
+
+**One-Command Deployment:**
 
 ```bash
-cd src
-uv sync
+# Clone and setup in one command
+git clone https://github.com/GENTEL-lab/OriGene.git
+cd OriGene
+./setup.sh
 ```
 
-2. **Activate the virtual environment**
+Or step by step:
 
-```bash
-source ./.venv/bin/activate
-```
+1. **Clone the repository:**
 
-3. **(Optional) Add the project root to `PYTHONPATH`**
+   ```bash
+   git clone https://github.com/GENTEL-lab/OriGene.git
+   cd OriGene
+   ```
 
-```bash
-export PYTHONPATH=$(pwd):$PYTHONPATH
-```
+2. **Configure API keys and MCP connection:**
 
-### Command-Line Usage
+   ```bash
+   # Edit the configuration file with your API keys
+   nano src/local_deep_research/_settings/.secrets.toml
+   # or use your preferred editor (vim, code, etc.)
+   ```
 
-Launch the interactive assistant:
+   Update the `[mcp]` section with your MCP server URL:
 
-```bash
-uv run -m local_deep_research.main
-```
+   ```toml
+   [mcp]          
+   server_url = "http://host.docker.internal:8789"
+   ```
 
-You will see a prompt similar to the following:
+   > **MCP Server Access in Docker**: Since OriGene runs inside a Docker container, it cannot use `127.0.0.1` to reach the host MCP server. Update the MCP server URL as follows:
+   > - For Mac/Windows: Use `http://host.docker.internal:8789`
+   > - For Linux: Use `http://172.17.0.1:8789`
+   > - Or deploy MCP in Docker and use service name
 
-```text
-Welcome to the Advanced Research System
-Type 'quit' to exit
+3. **Build and verify environment:**
 
-Select output type:
-1) Analysis (few minutes, answers questions, summarizes findings)
-2) Detailed Report (more time, generates a comprehensive report with deep analysis)
-Enter number (1 or 2):
-```
+   ```bash
+   # Quick check script (recommended for first-time setup)
+   ./docker-check.sh
 
-After selecting an output type, enter your research query and OriGene will return the results.
+   # Or manually build and run checks
+   docker-compose build
+   docker-compose run --rm origene python -m local_deep_research.test.check_all
+   ```
+
+4. **Run OriGene:**
+
+   **Using Makefile (Recommended):**
+
+   ```bash
+   # Run environment check
+   make check
+
+   # Interactive mode
+   make start
+
+   # Quick research
+   make quick QUERY="What are therapeutic targets for Alzheimer's disease?"
+
+   # Detailed research
+   make detailed QUERY="Analyze molecular mechanisms of EGFR in lung cancer"
+
+   # Run tests
+   make test-e2e
+
+   # See all available commands
+   make help
+   ```
+
+   **Using docker-compose directly:**
+
+   ```bash
+   # Interactive mode
+   docker-compose run --rm origene
+
+   # Quick research (CLI)
+   docker-compose run --rm origene python -m local_deep_research.main "your query here" --mode quick
+
+   # Detailed research (CLI)
+   docker-compose run --rm origene python -m local_deep_research.main "your query here" --mode detailed
+
+   # Run end-to-end test
+   docker-compose run --rm origene python -m local_deep_research.test.test_example
+   ```
+
+   **Important Notes:** 
+   - All logs will be saved to the `./logs` directory
+   - Embedding cache will be stored in the `./cache` directory
+
+---
+
+#### Option B: Native Installation (uv / conda)
+
+If you prefer native installation without Docker, follow the instructions below.
+
+1. **Clone the repository:**
+
+   ```bash
+   git clone https://github.com/GENTEL-lab/OriGene.git
+   cd OriGene
+   ```
+
+2. **Configure MCP connection and API keys:**
+
+   Edit the configuration file `src/local_deep_research/_settings/.secrets.toml` and fill in your MCP server URL and API keys (see [API Key Configuration](#api-key-configuration) above).
+
+   ```toml
+   [mcp]          
+   server_url = "http://127.0.0.1:8789"  # Use your actual MCP server URL and port
+   ```
+
+   If you changed the port during MCP deployment, make sure to update the `server_url` accordingly.
+
+3. **Install dependencies:**
+
+   ```bash
+   cd src
+   uv sync
+   ```
+
+4. **Activate the virtual environment:**
+
+   ```bash
+   source ./.venv/bin/activate
+   ```
+
+5. **(Optional) Add the project root to `PYTHONPATH`:**
+
+   ```bash
+   export PYTHONPATH=$(pwd):$PYTHONPATH
+   ```
+
+6. **System Check & Testing:**
+
+   Before running OriGene, you can verify your environment setup using the built-in check scripts:
+
+   **Run all environment checks (recommended before first use):**
+   ```bash
+   uv run -m local_deep_research.test.check_all
+   ```
+
+   This will check:
+   - Python version and all dependencies
+   - Configuration files and API keys
+   - MCP server connection
+   - Core module imports
+
+   **Run individual checks:**
+   ```bash
+   # Check dependencies only
+   uv run -m local_deep_research.test.check_deps
+
+   # Check API keys and configuration
+   uv run -m local_deep_research.test.check_config
+
+   # Check MCP server connection
+   uv run -m local_deep_research.test.check_mcp
+
+   # Check module imports
+   uv run -m local_deep_research.test.check_modules
+   ```
+
+   **Run end-to-end test (includes MCP tool call and LLM query):**
+   ```bash
+   uv run -m local_deep_research.test.test_example
+   ```
+
+   Example output:
+   ```text
+   ======================================================================
+                       OriGene Environment Check
+   ======================================================================
+
+   > testing dependencies...
+   > ✓ Dependencies ready (58 packages checked)
+
+   > checking LLM API keys...
+   > ✓ LLM API keys ready (5 APIs configured)
+
+   > checking MCP server connection...
+   > ✓ MCP tool list ready (4 checks passed)
+
+   > checking module imports...
+   > ✓ All modules ready (15 modules checked)
+
+   ======================================================================
+   > ✓ SUCCESS! You can run OriGene now!
+   ```
+
+7. **Run OriGene:**
+
+   Launch the interactive assistant:
+   ```bash
+   uv run -m local_deep_research.main
+   ```
+
+   You will see a prompt similar to the following:
+   ```text
+   Welcome to the Advanced Research System
+   Type 'quit' to exit
+
+   Select output type:
+   1) Analysis (few minutes, answers questions, summarizes findings)
+   2) Detailed Report (more time, generates a comprehensive report with deep analysis)
+   Enter number (1 or 2):
+   ```
+
+   After selecting an output type, enter your research query and OriGene will return the results.
+
+---
 
 ### Benchmark: Running and Scoring
+
+**Using Docker:**
+
+```bash
+# Run benchmark evaluation
+docker-compose run --rm origene python -m local_deep_research.evaluate_local
+
+# Score the results (example for TRQA-lit-choice)
+docker-compose run --rm origene python -m local_deep_research.score_evaluation_results \
+  --agent_results benchmark/TRQA_lit_choice/agent_answers_test.txt \
+  --original_data benchmark/TRQA_lit_choice/TRQA-lit-choice-172-coreset.csv \
+  --model_name "OriAgent"
+```
+
+**Using Native Installation:**
 
 Run the benchmark to generate agent answers (you can use either command):
 
@@ -130,78 +393,59 @@ uv run -m local_deep_research.score_evaluation_results \
 
 ---
 
+**Other Benchmarks:**
 
-## 4. TRQA Benchmark Description
-To evaluate performance, we constructed TRQA, a benchmark of 1,921 questions specific to therapeutic target identification tasks across multiple disease areas. 
+Using Docker:
+```bash
+# DbQA benchmark
+docker-compose run --rm origene python -m local_deep_research.score_evaluation_results \
+  --agent_results benchmark/DbQA/agent_answers_testv2.txt \
+  --original_data benchmark/DbQA/DbQA.csv \
+  --model_name "OriAgent"
 
-![Image](assets/benchmark_construction.jpg)
-![Image](assets/benchmark_description.jpg)
+# GPQA benchmark
+docker-compose run --rm origene python -m local_deep_research.score_evaluation_results \
+  --agent_results benchmark/GPQA/agent_answers_test.txt \
+  --original_data benchmark/GPQA/GPQA-lit-choice.csv \
+  --model_name "OriAgent"
 
-**Target Research-related Question Answering (TRQA)** is a comprehensive evaluation benchmark designed to assess the capabilities of OriGene and similar systems in biomedical reasoning and target discovery.
-
-TRQA evaluates core competencies including:  
-- Scientific planning  
-- Information retrieval  
-- Tool selection  
-- Reasoning toward biological conclusions  
-- Critical self-evolution  
-
-It spans domains such as fundamental biology, disease biology, pharmacology, and clinical medicine, integrating both scientific literature and real-world data from drug development pipelines and clinical trials.
-
-**TRQA includes two subsets**:
-- **TRQA-lit**: Focuses on recent research findings. Includes 172 multiple-choice questions (for rapid model/human comparison) and 1,108 short-answer questions covering key biomedical areas.
-- **TRQA-db**: Centers on competitive landscape analysis. Includes 641 short-answer questions that evaluate the ability to retrieve, integrate, and reason over data related to drug R&D and clinical trials.
-
-## 5. Evaluation Results
-**Target Research-related Question Answering (TRQA) benchmark leader board**
-| Method             | TRQA-lit Choice (Core Set) | TRQA-lit Short-Answer  | TRQA-db  |
-|--------------------|----------------------------------|--------------------------------|------------------|
-| OriGene            | 0.601                            | 0.826                          | 0.721            |
-| o3-mini            | 0.578                            | 0.720                          | 0.487            |
-| Claude-3.7-Sonnet  | 0.558                            | 0.695                          | 0.504            |
-| DeepSeek-R1        | 0.548                            | 0.714                          | 0.446            |
-| DeepSeek-V3        | 0.541                            | 0.768                          | 0.466            |
-| GPT-4o-search      | 0.531                            | 0.651                          | 0.493            |
-| Gemini-2.5-pro     | 0.529                            | 0.678                          | 0.359            |
-| GPT-4o             | 0.512                            | 0.696                          | 0.392            |
-| TxAgent            | 0.190                            | 0.472                          | 0.426            |
-| Human Group 3 (PhD + 3-5 year exp.)  | 0.523                            | ✗                          | ✗            |
-| Human Group 2 (PhD + 1-3 year exp.)  | 0.378                            | ✗                          | ✗            |
-| Human Group 1 (senior PhD candidates)  | 0.215                            | ✗                          | ✗            |
-
-## 6. Tools Sets
-
-![Image](assets/toolsets.jpg)
-
-OriGeneTools integrates over 600 tools to support target discovery and biomedical reasoning.
-
-- On the left, tools are grouped by **multi-omics domians** (e.g., genomics, transcriptomics, proteomics, phenomics, clinical evidence), highlighting OriGene’s ability to process biological data across scales.
-
-- On the right, the same tools are reorganized by **biomedical knowledge domains**: fundamental biology, disease biology, pharmacology, and competitive landscape, reflecting how OriGene supports expert-level reasoning across diverse therapeutic tasks.
-
-
-
-## 7. Citing OriGene
-Any publication that discloses findings arising from using this source code, the model parameters or outputs produced by those should cite:
-```
-@article{origene,
-    title={{OriGene}: A Self-Evolving Virtual Disease Biologist Automating Therapeutic Target Discovery},
-    author={Zhang, Zhongyue and Qiu, Zijie and Wu, Yingcheng and Li, Shuya and Wang, Dingyan and Zhou, Zhuomin and An, Duo and Chen, Yuhan and Li, Yu and Wang, Yongbo and Ou, Chubin and Wang, Zichen and Chen, Jack Xiaoyu and Zhang, Bo and Hu, Yusong and Zhang, Wenxin and Wei, Zhijian and Ma, Runze and Liu, Qingwu and Dong, Bo and He, Yuexi and Feng, Qiantai and Bai, Lei and Gao, Qiang and Sun, Siqi and Zheng, Shuangjia},
-    journal={bioRxiv},
-    year={2025},
-    publisher={Cold Spring Harbor Laboratory}
-}
+# TRQA-lit short answer benchmark
+docker-compose run --rm origene python -m local_deep_research.score_evaluation_results \
+  --agent_results benchmark/TRQA_lit_short_ans/agent_answers_test.txt \
+  --original_data benchmark/TRQA_lit_short_ans/TRQA-lit-short-answer-1108.csv \
+  --model_name "OriAgent"
 ```
 
-## 8. License
+Using Native Installation:
+```bash
+# DbQA benchmark
+uv run -m local_deep_research.score_evaluation_results \
+  --agent_results benchmark/DbQA/agent_answers_testv2.txt \
+  --original_data benchmark/DbQA/DbQA.csv \
+  --model_name "OriAgent"
+
+# GPQA benchmark
+uv run -m local_deep_research.score_evaluation_results \
+  --agent_results benchmark/GPQA/agent_answers_test.txt \
+  --original_data benchmark/GPQA/GPQA-lit-choice.csv \
+  --model_name "OriAgent"
+
+# TRQA-lit short answer benchmark
+uv run -m local_deep_research.score_evaluation_results \
+  --agent_results benchmark/TRQA_lit_short_ans/agent_answers_test.txt \
+  --original_data benchmark/TRQA_lit_short_ans/TRQA-lit-short-answer-1108.csv \
+  --model_name "OriAgent"
+```
+
+## 3. License
 
 This code repository is licensed under [the Creative Commons Attribution-Non-Commercial ShareAlike International License, Version 4.0 (CC-BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/) (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at https://github.com/GENTEL-lab/OriGene/blob/main/LICENSE.
 
-## 9. Contact
+## 4. Contact
 
 If you have any questions, please raise an issue or contact us at [shuangjia.zheng@sjtu.edu.cn](mailto:shuangjia.zheng@sjtu.edu.cn) or [zhongyuezhang@sjtu.edu.cn](mailto:zhongyuezhang@sjtu.edu.cn).
 
-## 10. Acknowledgements
+## 5. Acknowledgements
 
 Thanks to DeepSeek, ChatGPT, Claude, and Gemini for providing powerful language models that made this project possible.
 

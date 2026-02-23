@@ -34,9 +34,10 @@ DATASET_CONFIGS = {
     "TRQA-lit-choice-172-coreset.csv": "choice",
     "TRQA-db-641.csv": "keyword",
     "TRQA-lit-short-answer-1108.csv": "keyword",
+
     # original dataset
     "LitQA2_250424.xlsx": "choice",
-
+    "DbQA.csv": "choice",
     # keyword matching rules
     "choice": "choice",
     "short": "keyword",

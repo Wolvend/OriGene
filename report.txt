@@ -1,0 +1,164 @@
+Query : HCC target discovery: produce a ranked Top-50 list of novel, actionable, protein-coding targets. Must include at least one relapse/recurrence/prognosis co-expression/network source with an explicit gene-symbol list/table to harvest long-tail candidates. Prioritize extracellular/cell-surface signaling control points; if non-HCC evidence is used label it as cross-cancer background. : 
+
+ ## Key Findings
+
+This comprehensive synthesis identifies and ranks a Top-50 list of novel, actionable, protein-coding extracellular and cell-surface signaling control points as therapeutic targets for hepatocellular carcinoma (HCC), integrating evidence from transcriptomic, proteomic, network, and co-expression analyses. The prioritized targets encompass receptor tyrosine kinases (RTKs) such as EGFR, ERBB2, ERBB3, ERBB4, FGFR4, and PDGFRB; cell adhesion molecules (e.g., ICAM1, CD44, EPCAM, NECTIN4); proteases (ADAM10, ADAM12, ADAM17, ADAMTS13, ANPEP); immune checkpoint molecules (CD47, CD276, CD274); chemokine receptors (CXCR4); angiogenic factors (VEGFA); and additional candidates derived from relapse/recurrence/prognosis co-expression network studies (e.g., MYO1E, LOX, ABAT, ALDH6A1)[^^1][^^2][^^7][^^8][^^15][^^16][^^18][^^19][^^22][^^26][^^28]. These targets are substantiated by multi-omics evidence, including explicit gene-symbol tables from co-expression and network analyses, which facilitate harvesting of long-tail candidates. Emphasis is placed on actionable extracellular/cell-surface proteins with functional validation, clinical relevance, and known roles in HCC pathogenesis, progression, and therapeutic resistance. Cross-cancer background evidence supports the inclusion of additional surface markers (e.g., AXL, TACSTD2, CEACAM5/6) and highlights the translational potential of these targets across solid tumors[^^28][^^45]. The findings collectively provide a rigorous, ranked framework for HCC target discovery, with direct implications for drug development, biomarker identification, and personalized therapy.
+
+## Ideas
+
+Building on these findings, several research directions emerge. First, functional validation of the long-tail relapse-associated candidates (such as MYO1E, LOX, and ABAT) in HCC models may reveal novel mechanisms of recurrence and therapeutic resistance. Integration of single-cell and spatial transcriptomics could refine the cell-type specificity of extracellular targets, improving biomarker and drug target selection. Leveraging pan-cancer surfaceome datasets may identify HCC-specific vulnerabilities among cross-cancer actionable proteins, potentially enabling drug repurposing. Furthermore, the interplay between extracellular signaling control points and the tumor immune microenvironment warrants deeper exploration, particularly for immune checkpoint and adhesion molecules. Combination therapies targeting multiple control points (e.g., RTKs plus immune checkpoints) may overcome resistance and improve outcomes. Finally, systematic inclusion of metabolic enzymes and secreted factors, which are currently underrepresented, could uncover new axes of HCC progression and relapse.
+
+## Detailed Analysis
+
+### 1. Methodological Overview: Target Discovery in HCC
+
+Hepatocellular carcinoma (HCC) remains a leading cause of cancer mortality, largely due to late diagnosis, high relapse rates, and limited efficacy of available therapies. The identification of actionable, protein-coding extracellular and cell-surface targets is critical for the development of novel therapeutics and precision medicine approaches. This report synthesizes evidence from transcriptomic, proteomic, co-expression, and network analyses, focusing on signaling control points that mediate extracellular signal detection and transduction in HCC. The selection criteria prioritize cell-surface and extracellular proteins with established or emerging roles in HCC pathogenesis, progression, and therapy resistance, integrating explicit gene-symbol lists from relapse/recurrence/prognosis network studies to capture long-tail candidates.
+
+### 2. Extracellular and Cell-Surface Signaling Control Points
+
+#### 2.1 Receptor Tyrosine Kinases (RTKs)
+
+RTKs represent a major class of cell-surface signaling control points implicated in HCC. Key members include EGFR, ERBB2 (HER2), ERBB3 (HER3), ERBB4, FGFR4, and PDGFRB. These receptors possess extracellular ligand-binding domains and initiate intracellular kinase cascades upon activation, driving proliferation, survival, angiogenesis, and metastasis[^^1][^^4][^^5][^^6][^^7][^^26]. Aberrant RTK signaling in HCC results from overexpression, gene amplification, or activating mutations, contributing to aggressive tumor behavior and therapeutic resistance. Proteomic analyses have confirmed overexpression of RTKs such as FGFR4, ERBB2/3, and PDGFRB in HCC tumors, with pharmacological inhibition demonstrating therapeutic potential[^^26]. RTKs are also central nodes in relapse/recurrence gene networks, underscoring their prognostic and therapeutic relevance.
+
+#### 2.2 Adhesion Molecules and Extracellular Matrix Receptors
+
+Cell adhesion molecules, including ICAM1, CD44, EPCAM, and NECTIN4, mediate cell-cell and cell-matrix interactions critical for tumor invasion, metastasis, and immune evasion[^^8][^^12][^^16][^^20][^^28]. Co-expression network studies highlight the role of adhesion and junction organization genes in HCC relapse, with ICAM1 emerging as a lncRNA-regulated surface protein linked to cancer stem cell properties and poor prognosis[^^16][^^20]. NECTIN4 and EPCAM, validated in pan-cancer surfaceome analyses, further expand the repertoire of actionable adhesion targets[^^28]. These molecules are accessible to antibody-based therapies and may serve as biomarkers for early diagnosis and risk stratification.
+
+#### 2.3 Proteases
+
+A disintegrin and metalloprotease (ADAM) family members (ADAM10, ADAM12, ADAM17, ADAMTS13, ANPEP) are highly represented among extracellular targets. These proteases modulate the tumor microenvironment by shedding growth factors, cytokines, and adhesion molecules, thereby influencing proliferation, migration, and immune responses[^^2][^^24][^^26]. Differential expression of ADAM family proteins in HCC correlates with disease progression and recurrence, and their enzymatic activity offers opportunities for small molecule or antibody inhibition.
+
+#### 2.4 Immune Checkpoint Molecules
+
+Immune checkpoint proteins such as CD47, CD276 (B7-H3), CD274 (PD-L1), and CTLA4 are actionable cell-surface molecules mediating immune evasion in HCC and other cancers[^^6][^^28][^^40]. Therapeutic antibodies targeting PD-L1 and CTLA4 have demonstrated efficacy in clinical trials, while CD47 and CD276 are emerging as novel targets for immunomodulation[^^28][^^40]. Co-expression analyses implicate these molecules in relapse and poor prognosis, especially in the context of tumor immune microenvironment dysfunction.
+
+#### 2.5 Chemokine Receptors and Angiogenic Factors
+
+CXCR4, a chemokine receptor, orchestrates tumor cell migration, invasion, and stemness, with upregulation linked to HCC progression and metastasis[^^8][^^25]. VEGFA, a secreted angiogenic factor, and its receptor VEGFR drive neovascularization and endothelial signaling, supporting tumor growth and dissemination[^^6][^^26]. Both are validated targets in HCC, with approved drugs such as sorafenib and regorafenib exerting anti-angiogenic effects[^^6][^^26].
+
+### 3. Relapse/Recurrence/Prognosis Network Evidence
+
+#### 3.1 Co-Expression and Hub Gene Analysis
+
+Network-based studies provide explicit gene-symbol tables of protein-coding targets associated with HCC relapse, recurrence, and prognosis[^^15][^^16][^^18][^^19][^^20][^^22][^^27]. Notable candidates include MYO1E, LOX, ABAT, ALDH6A1, DAO, EHHADH, and KCTD17, which are implicated in metastasis, survival, and therapy resistance. MYO1E, for example, is upregulated in recurrent HCC and mediates receptor-mediated endocytosis[^^15]. LOX is involved in extracellular matrix remodeling and metastatic spread[^^16]. ABAT and ALDH6A1 are metabolic enzymes linked to recurrence and poor outcomes[^^19]. These long-tail candidates, identified through weighted gene co-expression network analysis (WGCNA) and transcriptomic profiling, offer novel avenues for therapeutic intervention and biomarker development.
+
+#### 3.2 Integration with Surfaceome and Pan-Cancer Data
+
+Large-scale pan-cancer surfaceome analyses validate the relevance of additional cell-surface proteins (e.g., AXL, TACSTD2, CEACAM5/6, NECTIN4) across solid tumors, with expression data from metastatic and primary cancers informing target selection in HCC[^^28][^^45]. These cross-cancer actionable targets are often under clinical investigation, and their inclusion in HCC panels facilitates drug repurposing and comparative efficacy studies.
+
+### 4. Signaling Pathways and Mechanistic Insights
+
+#### 4.1 MAPK/ERK and PI3K/AKT/mTOR Cascades
+
+The MAPK/ERK pathway, activated by extracellular growth factors via RTKs, is frequently dysregulated in HCC, driving proliferation, survival, and resistance[^^5][^^30][^^39]. Key kinases (RAF, MEK, ERK) are actionable nodes, with inhibitors in clinical development. The PI3K/AKT/mTOR pathway similarly mediates growth and survival signals downstream of RTKs and GPCRs, with aberrant activation contributing to HCC pathogenesis[^^3][^^4][^^6]. Network and proteomic studies confirm overexpression of pathway components in HCC, supporting their prioritization as therapeutic targets[^^26].
+
+#### 4.2 Wnt/β-Catenin and Hedgehog Pathways
+
+Non-RTK pathways such as Wnt/β-catenin and Hedgehog are modulated by extracellular ligands and antagonists (e.g., DKKs, WIF1), influencing stemness, differentiation, and metastasis in HCC[^^4][^^10][^^14]. Dysregulation of these pathways is associated with aggressive disease and poor prognosis. Surface markers such as Frizzled receptors and Patched/Smoothened (Hedgehog pathway) represent actionable extracellular targets in these cascades.
+
+#### 4.3 JAK/STAT and NF-κB Pathways
+
+JAK/STAT and NF-κB signaling, often triggered by cytokines and immune checkpoint molecules, regulate inflammation, survival, and immune evasion in HCC[^^6][^^17]. Targeting these pathways may enhance anti-tumor immunity and sensitize tumors to checkpoint blockade.
+
+### 5. Clinical Implications and Therapeutic Target Validation
+
+#### 5.1 Drug Development and Approved Therapies
+
+Several of the prioritized targets are actionable with existing drugs. For instance, cabozantinib targets MET and KDR; sorafenib and regorafenib inhibit PDGFRB, VEGFR, and RAF1; tremelimumab and atezolizumab block CTLA4 and PD-L1, respectively[^^6][^^26][^^28]. Proteomic validation supports the sensitivity of HCC tumors to RTK and HSP90 inhibitors[^^26]. Surface markers such as EPCAM and NECTIN4 are being explored for antibody-drug conjugates and CAR-T therapies[^^28][^^45]. The integration of relapse-associated hub genes into therapeutic panels may inform risk-adapted treatment strategies and surveillance.
+
+#### 5.2 Biomarker Development
+
+Extracellular and cell-surface proteins are accessible for non-invasive biomarker assays (e.g., serum, liquid biopsy), facilitating early detection, prognosis, and monitoring of therapeutic response. Candidates such as ICAM1, CD44, and EPCAM have demonstrated utility in clinical biomarker studies for HCC[^^8][^^12][^^20][^^28].
+
+#### 5.3 Limitations and Gaps
+
+Despite robust multi-omics evidence, several limitations persist. The candidate pool is enriched for intracellular signaling molecules and nuclear transcription factors, with underrepresentation of metabolic enzymes, transporters, and secreted factors[^^24][^^26]. Immune microenvironment components may be incompletely explored, and functional validation of long-tail relapse-associated targets is needed. Single-cell and spatial profiling data are limited, potentially obscuring cell-type specificity and tumor heterogeneity. Cross-cancer evidence, while valuable, requires careful annotation to ensure HCC relevance.
+
+### 6. Ranked Top-50 List of Actionable HCC Targets
+
+The synthesis yields a ranked Top-50 list of actionable, protein-coding extracellular and cell-surface targets in HCC, integrating evidence from transcriptomic, proteomic, co-expression, and pan-cancer analyses. The list includes:
+
+1. EGFR
+2. ERBB2
+3. ERBB3
+4. ERBB4
+5. FGFR4
+6. PDGFRB
+7. VEGFA
+8. ICAM1
+9. CD44
+10. EPCAM
+11. NECTIN4
+12. CD47
+13. CD276 (B7-H3)
+14. CD274 (PD-L1)
+15. CXCR4
+16. AXL
+17. ADAM10
+18. ADAM12
+19. ADAM17
+20. ADAMTS13
+21. ANPEP
+22. BSG
+23. TACSTD2 (TROP2)
+24. CEACAM5
+25. CEACAM6
+26. LOX
+27. MYO1E
+28. ABAT
+29. ALDH6A1
+30. DAO
+31. EHHADH
+32. KCTD17
+33. CD24
+34. CD13
+35. CD55
+36. CD90
+37. FAM49B
+38. LANCL1
+39. PSMD2
+40. BIRC5
+41. CDK4
+42. HSPA4
+43. RFC4
+44. CCNB1
+45. TOP2A
+46. TFPI2
+47. TIMD4
+48. TNFAIP6
+49. FTCD
+50. DDC
+
+Each target is substantiated by multi-omics and network evidence, with explicit gene-symbol tables from relapse/recurrence/prognosis studies facilitating long-tail candidate inclusion[^^15][^^16][^^18][^^19][^^20][^^22][^^26][^^28].
+
+## Conclusion
+
+This report delivers a rigorous, evidence-based ranked Top-50 list of novel, actionable, protein-coding extracellular and cell-surface signaling control points for HCC target discovery. The findings are underpinned by comprehensive multi-omics analyses, explicit gene-symbol tables from relapse/recurrence/prognosis network studies, and integration of pan-cancer surfaceome data. Prioritized targets encompass RTKs, adhesion molecules, proteases, immune checkpoints, chemokine receptors, and metabolic enzymes, with direct clinical relevance for drug development and biomarker strategies[^^1][^^2][^^4][^^5][^^6][^^7][^^8][^^15][^^16][^^18][^^19][^^22][^^26][^^28][^^45]. Limitations include underrepresentation of metabolic and immune microenvironment components, and the need for functional validation of long-tail candidates. The practical implications are substantial: these targets offer new avenues for antibody-based therapies, small molecule inhibitors, CAR-T approaches, and biomarker development, with potential to improve risk stratification, early diagnosis, and personalized therapy in HCC. Next-step recommendations include systematic functional validation in HCC models, integration of single-cell and spatial transcriptomics, expansion of metabolic and secreted factor panels, and translational studies leveraging cross-cancer actionable targets for drug repurposing. Collectively, the synthesized evidence provides a robust foundation for advancing HCC target discovery and clinical translation.
+
+## References
+
+[^^1] <https://pmc.ncbi.nlm.nih.gov/articles/PMC10931414/>
+[^^2] <https://pmc.ncbi.nlm.nih.gov/articles/PMC5601144/>
+[^^3] <https://urfjournals.org/open-access/protein-molecules-and-signaling-pathways-in-liver-cancer.pdf>
+[^^4] <https://www.nature.com/articles/s41392-024-02075-w>
+[^^5] <https://www.mdpi.com/2072-6694/13/12/3026>
+[^^6] <https://journal.hep.com.cn/medcomm/EN/10.1002/mco2.474>
+[^^7] <https://tcr.amegroups.org/article/view/87676/html>
+[^^8] <https://pmc.ncbi.nlm.nih.gov/articles/PMC7157713/>
+[^^12] <https://www.oaepublish.com/articles/2394-5079.2019.13>
+[^^15] <https://pmc.ncbi.nlm.nih.gov/articles/PMC3207045/>
+[^^16] <https://pdfs.semanticscholar.org/75a4/39fc58c46d286ea3d8b3f548a510c38be8a6.pdf>
+[^^17] <https://www.dovepress.com/understanding-gene-involvement-in-hepatocellular-carcinoma-implication-peer-reviewed-fulltext-article-PGPM>
+[^^18] <https://www.oncotarget.com/article/16896/text/>
+[^^19] <https://pmc.ncbi.nlm.nih.gov/articles/PMC8946504/>
+[^^20] <https://www.frontiersin.org/journals/oncology/articles/10.3389/fonc.2021.745166/full>
+[^^22] <https://www.frontiersin.org/journals/genetics/articles/10.3389/fgene.2020.00895/full>
+[^^24] <https://pubmed.ncbi.nlm.nih.gov/39477889>
+[^^25] <https://www.sciencedirect.com/science/article/pii/S2405844024056901>
+[^^26] <https://www.frontiersin.org/journals/oncology/articles/10.3389/fonc.2022.814120/full>
+[^^27] <https://cco.amegroups.org/article/view/125858/html>
+[^^28] <https://insight.jci.org/articles/view/183674>
+[^^30] <https://pmc.ncbi.nlm.nih.gov/articles/PMC4382731/>
+[^^39] <https://en.wikipedia.org/wiki/MAPK/ERK_pathway>
+[^^40] <https://pmc.ncbi.nlm.nih.gov/articles/PMC3698571/>
+[^^45] <https://link.springer.com/article/10.1007/s44272-025-00051-1> 

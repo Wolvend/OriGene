@@ -23,6 +23,14 @@ web-ext-artifacts
 target/
 log/
 evaluation_*/
-
+src/logs/
+src/middleresult.txt
+src/report.txt
+**/logs/
 nano.save
 nohup.out
+notes/
+**/notes/
+local_deep_research/_settings/.secrets.toml
+logs/
+**/cache/

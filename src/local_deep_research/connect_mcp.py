@@ -3,7 +3,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from .config import mcp_url
 
-MCP_SERVICE_URL = mcp_url 
+MCP_SERVICE_URL = mcp_url
 tool_packages = [
     "chembl_mcp",
     "kegg_mcp",
@@ -17,17 +17,19 @@ tool_packages = [
     "ucsc_mcp",
     "fda_drug_mcp",
     "opentargets_mcp",
+    "depmap_mcp",
     "monarch_mcp",
     "clinicaltrials_mcp",
     "pdb_mcp",
     "dbsearch_mcp",
+    #   "zhihuiya_mcp",
 ]
 
 
 mcp_servers = {
     package: {
         "transport": "streamable_http",
-        "url": f"{MCP_SERVICE_URL}/mcp_index/{package}/mcp/",
+        "url": f"{MCP_SERVICE_URL}/{package}/mcp/",
     }
     for package in tool_packages
 }
@@ -59,3 +61,9 @@ class OrigeneMCPToolClient:
             ]
         self.mcp_tool_map = {tool.name: tool for tool in self.mcp_tools}
         print(f"MCP server connected! Found {len(self.mcp_tools)} tools")
+
+    async def call_tool(self, tool_name: str, args: dict[str, Any]):
+        tool = self.mcp_tool_map.get(tool_name)
+        if not tool:
+            raise ValueError(f"Tool {tool_name} not found")
+        return await tool.ainvoke(args)

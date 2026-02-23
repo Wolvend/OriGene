@@ -63,6 +63,3 @@ dependencies = [
 log_cli = true
 log_cli_level = "INFO"
 filterwarnings = ["ignore::UserWarning"]
-[[tool.uv.index]]
-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-default = true

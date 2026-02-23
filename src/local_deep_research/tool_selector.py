@@ -183,7 +183,9 @@ class ExpertToolSelector:
         if not available_tools:
             self.available_tools = list(self.tool_map.keys())
         else:
-            self.available_tools = [tool for tool in self.available_tools if tool in self.tool_map.keys()]
+            self.available_tools = [
+                tool for tool in self.available_tools if tool in self.tool_map.keys()
+            ]
 
     def extract_entity(self, query: str):
         entity_extraction_propmt = f"""
@@ -234,10 +236,10 @@ Please provide your analysis in the following JSON format:
             ]
 
         return result
-    
+
     def entity_filter(self, query: str, entity_and_relationship: dict):
         entities = entity_and_relationship["entities"]
-        
+
         prompt = f"""
 ## Task Description
 You are a professional disease biologist. Please filter out entities without clear specificity from the input information and return the filtered information.
@@ -260,13 +262,19 @@ Please provide your output in the following list format:
 """
         result = self.llm.invoke(prompt)
         filtered_entities = extract_and_convert_list(result.content)
+        # Defensive: LLM sometimes returns invalid JSON and parser returns None.
+        # In that case, fall back to original extracted entities to avoid crashing.
+        if filtered_entities is None:
+            filtered_entities = entities
         entity_and_relationship["entities"] = filtered_entities
-        
+
         entity_set = set([entity[0] for entity in filtered_entities])
         entity_and_relationship["relationships"] = [
-            relationship for relationship in entity_and_relationship["relationships"] if relationship[0] in entity_set and relationship[1] in entity_set
+            relationship
+            for relationship in entity_and_relationship["relationships"]
+            if relationship[0] in entity_set and relationship[1] in entity_set
         ]
-        
+
         return entity_and_relationship
 
     async def run(self, query: str):
@@ -378,7 +386,11 @@ Please provide your output in the following list format:
         return entity2tools
 
     async def precise_retrieval(self, item, tool_candidates: list):
-        tool_list = [self.tool_map[tool_name] for tool_name in tool_candidates if tool_name in self.available_tools]
+        tool_list = [
+            self.tool_map[tool_name]
+            for tool_name in tool_candidates
+            if tool_name in self.available_tools
+        ]
         tool_desc = generate_tools_descriptions(tool_list)
 
         tool_selection_propmt = f"""
@@ -421,13 +433,23 @@ Please provide your analysis in the following JSON format:
 class GeneralToolSelector:
     # Candidate general tools
     GENERAL_TOOLS_NAME = [
+        "tavily_search",
+        'paper_search',
+        "pubmed_search",
+        "search_target",
+        "search_assay",
+        "search_activity",
+        "tcga_immune_correlation_analysis",
         "get_general_info_by_compound_name",
         "get_general_info_by_protein_or_gene_name",
         "get_general_info_by_disease_name",
         # "zhihuiya_biologist_llm",
-        "search_papers",
-        "tavily_search"
+        # "search_papers",
+        'get_target_gene_ontology_by_name',
+        'get_target_classes_by_name',
+        'get_associated_diseases_phenotypes_by_target_name'
     ]
+
     def __init__(self, llm_light, llm_reasoning, mcp_client):
         self.llm_light = llm_light
         self.llm_reasoning = llm_reasoning
@@ -503,15 +525,46 @@ Please provide your analysis in the following JSON format:
 ```
 
 ## Example
-Example question: Will ADORA2A blockade activate HIF-1α signaling in cancer?
+**Question**: "Identify novel kinase targets upregulated in Breast Cancer and assess their druggability."
 
-Example output:
+**Output**:
+```json
 [
-{{"item": "ADORA2A", "tool": "get_general_info_by_protein_or_gene_name", "tool_input": {{"name": "ADORA2A"}}}},
-{{"item": "ADORA2A blockade", "tool": "tavily_search", "tool_input": {{"query": "ADORA2A blockade"}}}},
-{{"item": "HIF-1α signaling", "tool": "tavily_search", "tool_input": {{"query": "HIF-1α signaling"}}}},
-{{"item": "Relationship between ADORA2A blockade and HIF-1α signaling", "tool": "tavily_search", "tool_input": {{"query": "HIF-1α signaling"}}}},
-]
+  {{
+    "item": "Harvest a candidate name list of extracellularly reachable signaling control points in Glioblastoma (surfaceome / ligand–receptor / receptor atlas)",
+    "tool": "tavily_search",
+    "tool_input": {{
+      "query": "glioblastoma surfaceome extracellularly accessible signaling receptors ligand-receptor atlas candidate targets list"
+    }}
+    }},
+  {{
+    "item": "Add tumor-intrinsic functional anchors for candidates (perturbation/fitness, cell-fate gating, stress adaptation, resistance)",
+    "tool": "tavily_search",
+    "tool_input": {{
+      "query": "glioblastoma tumor-intrinsic dependency knockout knockdown CRISPR fitness cell surface signaling receptor apoptosis cell cycle stress resistance"
+    }}
+    }}
+  {{
+    "item": "Deep search: pull key mechanistic paper(s) for a shortlisted candidate (how it gates signaling and cell-fate programs in GBM)",
+    "tool": "paper_search",
+    "tool_input":   {{
+      "query": "EGFR glioblastoma mechanism signaling receptor cell cycle apoptosis stress response"
+    }}
+    }}
+  {{
+    "item": "Confirm target class / localization metadata for the shortlisted candidate",
+    "tool": "get_general_info_by_protein_or_gene_name",
+    "tool_input":   {{
+      "name": "EGFR"
+    }}
+  }},
+  {{
+    "item": "First-in-class check: flag clear approved/late-stage direct modulators; otherwise mark FIC_uncertain if needed",
+    "tool": "pubmed_search",
+    "tool_input":   {{
+      "query": "EGFR clinical trial Phase II Phase III approved direct modulator antibody antagonist inhibitor"
+    }}
+    }}
 ``` 
 """
         if len(self.general_tools) == 0:
@@ -585,14 +638,68 @@ class ToolSelector:
         # Choose the specific tools to call
         expert_tool_invoke_list = await self.expert_tool_selector.run(query)
         tool_invoke_list = general_tool_invoke_list + expert_tool_invoke_list
+        # Filter out obviously invalid tool calls (especially for search tools that require a non-empty query).
+        # This prevents cases like paper_search being called with tool_input="[]" or other empty artifacts.
+        cleaned: list[dict] = []
+        for each in tool_invoke_list:
+            if not isinstance(each, dict):
+                continue
+            tool = each.get("tool")
+            tool_input = each.get("tool_input")
+            if not tool:
+                continue
 
+            # Search tools must have a real query string inside a dict.
+            if tool in {"paper_search", "tavily_search", "pubmed_search"}:
+                if not isinstance(tool_input, dict):
+                    continue
+                q = tool_input.get("query")
+                if not (isinstance(q, str) and q.strip()):
+                    continue
+                cleaned.append(each)
+                continue
 
-        tool_invoke_list = [
-            each for each in tool_invoke_list if each and each.get("tool_input")
-        ]
+            # Guardrail: ontology lookup is frequently called with plain-English phrases (e.g., "co-expression network")
+            # which tends to 400 at the Ensembl endpoint. Keep only short, token-like terms.
+            if tool == "get_ontology_name":
+                if not isinstance(tool_input, dict):
+                    continue
+                name = tool_input.get("name") or tool_input.get("query") or tool_input.get("term")
+                if not (isinstance(name, str) and name.strip()):
+                    continue
+                name = name.strip()
+                if len(name) > 40 or any(ch.isspace() for ch in name):
+                    logging.warning(
+                        f"Discarding get_ontology_name tool call due to unlikely ontology term (too long or contains whitespace): {tool_input}"
+                    )
+                    continue
+                cleaned.append(each)
+                continue
+
+            # Guardrail: gene-specific expression tool is prone to failing when input is not a clean HGNC-like symbol.
+            if tool == "get_gene_specific_expression_in_cancer_type":
+                if not isinstance(tool_input, dict):
+                    continue
+                gene = tool_input.get("gene") or tool_input.get("name") or tool_input.get("query")
+                if not (isinstance(gene, str) and gene.strip()):
+                    continue
+                gene = gene.strip()
+                if not (2 <= len(gene) <= 20) or not all((c.isalnum() or c in {"-", "_"}) for c in gene):
+                    logging.warning(
+                        f"Discarding get_gene_specific_expression_in_cancer_type tool call due to invalid gene input: {tool_input}"
+                    )
+                    continue
+                cleaned.append(each)
+                continue
+
+            # Default: keep any non-empty tool_input (dict or scalar) for non-search tools.
+            if tool_input:
+                cleaned.append(each)
+
+        tool_invoke_list = cleaned
 
         return tool_invoke_list
-    
+
     def tool_input_filter(self, tool_invoke_list: list):
         prompt = f"""
 ## Task Description
@@ -616,7 +723,6 @@ Please provide your analysis in the following JSON format:
         result = self.llm_light.invoke(prompt)
         filtered_tool_invoke_list = extract_and_convert_list(result.content)
         return filtered_tool_invoke_list
-    
 
     async def run_batch(self, query_list):
         """

@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import csv
+from datetime import datetime
 import os
 import pickle
 import time
@@ -12,29 +14,35 @@ import pandas as pd
 from .config import settings
 from .search_system import AdvancedSearchSystem
 
-
 file_lock = Lock()
 
 
-async def agent_infer(query: str, timeout_seconds: int = 1800) -> Optional[str]:
+async def agent_infer(
+    query: str,
+    question_id: int | None = None,
+    run_ts: str | None = None,
+    timeout_seconds: int = 1800,
+    session_log_dir: str = None,
+) -> Optional[str]:
     """"""
     try:
         logging.basicConfig(level=logging.INFO)
         logger = logging.getLogger(__name__)
 
-        
         system = AdvancedSearchSystem(
-            max_iterations=2, questions_per_iteration=4, is_report=False
+            max_iterations=2,
+            questions_per_iteration=2,
+            is_report=False,
+            session_log_dir=session_log_dir,
         )
 
-        # initialize system
         await system.initialize()
 
         print("Welcome to the Advanced Research System")
         print("Type 'quit' to exit")
 
         start_time = time.time()
-        results = await system.analyze_topic(query)
+        results = await system.analyze_topic(query, question_id=question_id)
         elapsed_time = time.time() - start_time
         # print("agent_infer results:", results)
         print("agent_infer results current_knowledge:", results["current_knowledge"])
@@ -48,62 +56,135 @@ async def agent_infer(query: str, timeout_seconds: int = 1800) -> Optional[str]:
         logger.error(f"Error in agent_infer: {str(e)}")
         return f"Error processing query: {str(e)}"
     finally:
-        # ensure system resources are cleaned up correctly
         if system and hasattr(system, "cleanup"):
             try:
                 await system.cleanup()
             except Exception:
                 pass
-        # give async tasks a little time to complete cleanup
         await asyncio.sleep(0.00001)
 
 
 def process_query(args):
-    """process single query and save result immediately"""
-    i, query, save_path = args
+    i, query, save_path, run_ts, session_log_dir = args
     try:
         print(f"Processing query {i}: {query}")
         start_time = time.time()
 
-        
-        answer = asyncio.run(agent_infer(query))
+        answer = asyncio.run(
+            agent_infer(
+                query,
+                question_id=i,
+                run_ts=run_ts,
+                session_log_dir=session_log_dir,
+            )
+        )
 
         elapsed_time = time.time() - start_time
         data = f"question id: {i} \nquestion: {query} \nanswer: {answer} \nprocessing time: {elapsed_time:.2f}s\n\n"
 
-       
         with file_lock:
-            with open(save_path, "a") as f:
+            with open(save_path, "a", encoding="utf-8") as f:
                 f.write(data)
-                f.flush()  
+                f.flush()
+
+            # Write to CSV Index
+            if session_log_dir:
+                csv_path = os.path.join(session_log_dir, "index.csv")
+                file_exists = os.path.exists(csv_path)
+
+                safe_id = str(i).replace("/", "_").replace("\\", "_")
+                full_trace = os.path.abspath(
+                    os.path.join(session_log_dir, f"trace_{safe_id}_full.md")
+                )
+                clean_trace = os.path.abspath(
+                    os.path.join(session_log_dir, f"trace_{safe_id}_clean.md")
+                )
+                case_json = os.path.abspath(
+                    os.path.join(session_log_dir, f"case_{safe_id}.json")
+                )
+
+                with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    if not file_exists:
+                        writer.writerow(
+                            [
+                                "id",
+                                "status",
+                                "query",
+                                "answer",
+                                "full_trace",
+                                "clean_trace",
+                                "case_json",
+                            ]
+                        )
+
+                    # Truncate answer for CSV readability if too long
+                    csv_answer = answer[:1000] + "..." if len(answer) > 1000 else answer
+                    writer.writerow(
+                        [
+                            i,
+                            "success",
+                            query,
+                            csv_answer,
+                            full_trace,
+                            clean_trace,
+                            case_json,
+                        ]
+                    )
 
         print(f"Completed query {i} in {elapsed_time:.2f}s")
         return i, query, answer
     except Exception as e:
         print(f"Error processing query {i}: {e}")
+
         with file_lock:
-            with open(save_path, "a") as f:
+            with open(save_path, "a", encoding="utf-8") as f:
                 data = f"question id: {i} \nquestion: {query} \nERROR: {str(e)}\n\n"
                 f.write(data)
                 f.flush()
+
+            # Write error to CSV
+            if session_log_dir:
+                csv_path = os.path.join(session_log_dir, "index.csv")
+                file_exists = os.path.exists(csv_path)
+                with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    if not file_exists:
+                        writer.writerow(
+                            [
+                                "id",
+                                "status",
+                                "query",
+                                "answer",
+                                "full_trace",
+                                "clean_trace",
+                                "case_json",
+                            ]
+                        )
+                    writer.writerow([i, "error", query, str(e), "", "", ""])
+
         return i, query, (f"ERROR: {str(e)}", "")
 
 
 def run_evaluation(
     dataset_name="litqa",
-    save_name="agent_answers_local.txt",
+    save_name="agent_answers_test.txt",
     num_processes=5,
     use_indices=False,
     indices_path=None,
+    run_ts: str | None = None,
 ):
-    """run evaluation main function""" 
-
-    # use relative path, for others to use
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     query_list = []
+    run_ts = run_ts or datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    
+    # Create session log directory
+    session_log_dir = os.path.join(project_root, "logs", run_ts)
+    if not os.path.exists(session_log_dir):
+        os.makedirs(session_log_dir, exist_ok=True)
+    print(f"Session logs will be saved to: {session_log_dir}")
+
     indices = None
     if use_indices and indices_path:
         try:
@@ -113,20 +194,17 @@ def run_evaluation(
             print(f"Error loading indices: {e}")
             return None
 
-   
     if dataset_name == "litqa":
         xlsx_path = os.path.join(
             project_root, "benchmark", "LitQA", "LitQA2_250424.xlsx"
         )
         save_path = os.path.join(project_root, "benchmark", "LitQA", save_name)
 
-        
         if not os.path.exists(xlsx_path):
-            print(f"dataset file not found: {xlsx_path}")
+            print(f"Dataset file not found: {xlsx_path}")
             return None
 
-        # clear or create result file
-        with open(save_path, "w") as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             f.write(
                 f"Starting parallel processing at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             )
@@ -141,9 +219,33 @@ def run_evaluation(
                     choice_text = row[f"choice_{choice}"]
                     choices += f"\n{choice}. {choice_text}"
             query = f"[single choice] {question} {choices}"
-            query_list.append((i, query, save_path))
+            query_list.append((i, query, save_path, run_ts, session_log_dir))
 
-    
+    elif dataset_name == "gpqa":
+        xlsx_path = os.path.join(
+            project_root, "benchmark", "GPQA", "GPQA_Biology_250424.xlsx"
+        )
+        save_path = os.path.join(project_root, "benchmark", "GPQA", save_name)
+
+        if not os.path.exists(xlsx_path):
+            print(f"Dataset file not found: {xlsx_path}")
+            return None
+
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(
+                f"Starting parallel processing at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            )
+
+        df = pd.read_excel(xlsx_path)
+
+        for i, row in df.iterrows():
+            question = row["question"]
+            choice_A = row["choice_A"]
+            choice_B = row["choice_B"]
+            choice_C = row["choice_C"]
+            choice_D = row["choice_D"]
+            query = f"[single choice] {question} \nA. {choice_A} \nB. {choice_B} \nC. {choice_C} \nD. {choice_D}"
+            query_list.append((i, query, save_path, run_ts, session_log_dir))
 
     elif dataset_name == "trqa_db_short":
         csv_path = os.path.join(
@@ -154,10 +256,10 @@ def run_evaluation(
         )
 
         if not os.path.exists(csv_path):
-            print(f"dataset file not found: {csv_path}")
+            print(f"Dataset file not found: {csv_path}")
             return None
 
-        with open(save_path, "w") as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             f.write(
                 f"Starting parallel processing at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             )
@@ -167,7 +269,7 @@ def run_evaluation(
         for i, row in df.iterrows():
             question = row["Question"]
             query = f"[short answer] {question}"
-            query_list.append((i, query, save_path))
+            query_list.append((i, query, save_path, run_ts, session_log_dir))
 
     elif dataset_name == "trqa_lit_choice":
         csv_path = os.path.join(
@@ -181,10 +283,10 @@ def run_evaluation(
         )
 
         if not os.path.exists(csv_path):
-            print(f"dataset file not found: {csv_path}")
+            print(f"Dataset file not found: {csv_path}")
             return None
 
-        with open(save_path, "w") as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             f.write(
                 f"Starting parallel processing at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             )
@@ -194,7 +296,6 @@ def run_evaluation(
         for i, row in df.iterrows():
             question = row["Question"]
             options_str = row["Options"]
-            
             try:
                 options = json.loads(options_str)
                 choices = ""
@@ -202,7 +303,7 @@ def run_evaluation(
                     choices += f"\n{key}. {value}"
                 # query = f"[multiple choice] (you must give at least one answer) {question} {choices}"
                 query = f"[multiple choice] {question} {choices}"
-                query_list.append((i, query, save_path))
+                query_list.append((i, query, save_path, run_ts, session_log_dir))
             except json.JSONDecodeError:
                 print(
                     f"Warning: Could not parse options for question {i}: {options_str}"
@@ -221,10 +322,10 @@ def run_evaluation(
         )
 
         if not os.path.exists(csv_path):
-            print(f"dataset file not found: {csv_path}")
+            print(f"Dataset file not found: {csv_path}")
             return None
 
-        with open(save_path, "w") as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             f.write(
                 f"Starting parallel processing at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             )
@@ -234,19 +335,64 @@ def run_evaluation(
         for i, row in df.iterrows():
             question = row["Question"]
             query = f"[short answer] {question}"
-            query_list.append((i, query, save_path))
+            query_list.append((i, query, save_path, run_ts, session_log_dir))
 
-    
+    elif dataset_name == "dbqa":
+        xlsx_path = os.path.join(project_root, "benchmark", "DbQA", "DbQA_250424.xlsx")
+        save_path = os.path.join(project_root, "benchmark", "DbQA", save_name)
 
+        if not os.path.exists(xlsx_path):
+            print(f"Dataset file not found: {xlsx_path}")
+            return None
+
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(
+                f"Starting parallel processing at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            )
+
+        df = pd.read_excel(xlsx_path)
+
+        if "question" in df.columns:
+            q_col = "question"
+        elif "Question" in df.columns:
+            q_col = "Question"
+        else:
+            raise ValueError("DbQA: Question column not found (question / Question).")
+
+        choice_keys = []
+        for letter in list("ABCDEFGHIJ"):
+            candidates = [
+                f"choice_{letter}",
+                f"Choice_{letter}",
+                f"option_{letter}",
+                f"Option_{letter}",
+                letter,
+                letter.lower(),
+            ]
+            for c in candidates:
+                if c in df.columns:
+                    choice_keys.append((letter, c))
+                    break
+        if not choice_keys:
+            raise ValueError("DbQA: No option columns were found.")
+
+        for i, row in df.iterrows():
+            question = row[q_col]
+            choices = ""
+            for letter, colname in choice_keys:
+                val = row[colname]
+                if not pd.isnull(val):
+                    choices += f"\n{letter}. {val}"
+            query = f"[single choice] {question} {choices}"
+            query_list.append((i, query, save_path, run_ts, session_log_dir))
 
     else:
-        print(f"unsupported dataset: {dataset_name}")
+        print(f"Unsupported dataset: {dataset_name}")
         print(
-            "supported datasets: litqa, trqa_db_short, trqa_lit_choice, trqa_lit_short"
+            "Supported datasets: litqa, gpqa, trqa_db_short, trqa_lit_choice, trqa_lit_short, dbqa"
         )
         return None
 
-    
     if use_indices and indices:
         query_list = [data for data in query_list if data[0] in indices]
 
@@ -254,15 +400,13 @@ def run_evaluation(
     print(f"Results will be saved to: {save_path}")
     print(f"Starting parallel processing with {num_processes} processes")
 
-   
     with Pool(processes=num_processes) as pool:
         results = pool.map_async(process_query, query_list)
         results.wait()
 
     print("All queries processed!")
 
-    # 汇总所有结果
-    with open(save_path, "a") as f:
+    with open(save_path, "a", encoding="utf-8") as f:
         f.write(f"\nAll processing completed at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
     print(f"Results saved to: {save_path}")
@@ -270,36 +414,31 @@ def run_evaluation(
 
 
 def print_dataset_info():
-    """print available dataset information"""
-    print("\n=== available dataset information ===")
-    print("1. litqa - literature question dataset (choice question)")
-    print("2. trqa_db_short - TRQA database short answer dataset (short answer)")
-    print("3. trqa_lit_choice - TRQA literature choice question dataset (multiple choice)")
-    print("4. trqa_lit_short - TRQA literature short answer dataset (short answer)")
-    print("\ninput format:")
-    print("- choice question: [single choice] or [multiple choice] + question + options")
-    print("- short answer: [short answer] + question")
-    print("\noutput format:")
-    print("- question id: [id]")
-    print("- question: [question]")
-    print("- answer: [answer]")
-    print("- processing time: [processing time]")
+    """Print information of available datasets"""
+    print("\n=== Available Dataset Information ===")
+    print("1. litqa - Literature Question Answering Dataset (Single Choice)")
+    print("2. gpqa - General Science Question Answering (Single Choice)")
+    print("3. trqa_db_short - TRQA Database Short Answer Questions (Short Answer)")
+    print("4. trqa_lit_choice - TRQA Literature Multiple Choice Questions (Multiple Choice)")
+    print("5. trqa_lit_short - TRQA Literature Short Answer Questions (Short Answer)")
+    print("\nInput Format:")
+    print("- Single Choice: [single choice] or [multiple choice] + Question + Options")
+    print("- Short Answer: [short answer] + Question")
+    print("\nOutput Format:")
+    print("- question id: [ID]")
+    print("- question: [Question Content]")
+    print("- answer: [Model Answer]")
+    print("- processing time: [Processing Time]")
     print("=" * 50)
 
 
 if __name__ == "__main__":
-    
     print_dataset_info()
-
-    # you can modify these parameters to run different evaluations
-    # dataset_name = "trqa_lit_choice"  # optional: "litqa",  "trqa_db_short", "trqa_lit_choice", "trqa_lit_short"
-    # save_name = "agent_answers_test.txt"
-
-    dataset_name = "trqa_lit_choice"  # optional: "litqa",  "trqa_db_short", "trqa_lit_choice", "trqa_lit_short"
+    dataset_name = "trqa_lit_choice"
     save_name = "agent_answers_test.txt"
-    num_processes = 5 # adjust the number of processes according to your system
-    use_indices = False  # whether to use index file
-    indices_path = None  # index file path
+    num_processes = 6
+    use_indices = False
+    indices_path = None
 
     result_path = run_evaluation(
         dataset_name=dataset_name,
@@ -312,9 +451,11 @@ if __name__ == "__main__":
     if result_path:
         print(f"Evaluation completed. Results in: {result_path}")
 
-    print("\nhow to use other datasets:")
-    print("modify the dataset_name variable to one of the following values:")
-    print("- 'litqa' - literature question dataset (choice question)")
-    print("- 'trqa_db_short' - database short answer dataset (short answer)")
-    print("- 'trqa_lit_choice' - literature choice question dataset (multiple choice)")
-    print("- 'trqa_lit_short' - literature short answer dataset (short answer)")
+    print("\nHow to use other datasets:")
+    print("Modify the dataset_name variable above to one of the following values:")
+    print("- 'litqa' - Literature QA (Single Choice)")
+    print("- 'gpqa' - General Science QA (Single Choice)")
+    print("- 'trqa_db_short' - Database-related QA (Short Answer)")
+    print("- 'trqa_lit_choice' - Literature-related QA (Multiple Choice)")
+    print("- 'trqa_lit_short' - Literature-related QA (Short Answer)")
+    print("- 'dbqa' - Database QA (Single Choice)")

@@ -5,9 +5,10 @@ import os
 import re
 import textwrap
 from datetime import datetime
-from typing import  Dict, List, Tuple
+from typing import Dict, List, Tuple
+from pathlib import Path
 from .config import (
-    settings,    
+    settings,
     get_claude_openai,
     get_deepseek_r1,
     get_deepseek_v3,
@@ -17,17 +18,26 @@ from .config import (
 
 from .connect_mcp import OrigeneMCPToolClient, mcp_servers
 
+# Import new data structures and parsers
+from .data_structures import ResearchContext
+from .tool_parsers import parse_tool_result
+from .evidence_parser import ToolParseAgent, BibliographyRegistry, BibliographyEntry
+from .trace_logger import ResearchTraceLogger
+
 # Import utilities from the new support module
 from .search_system_support import (
     compress_all_llm,
     extract_and_convert_list,
-    parse_single,  
+    parse_single,
     safe_json_from_text,
     SourcesReference,
 )
 from .tool_executor import ToolExecutor
 from .tool_selector import ToolSelector
-from .tools.template.templateagent import retrieve_small_template, retrieve_large_template
+from .tools.template.templateagent import (
+    retrieve_small_template,
+    retrieve_large_template,
+)
 from .utilties.search_utilities import (
     invoke_with_timeout_and_retry,
     remove_think_tags,
@@ -48,12 +58,10 @@ log_file_path = os.path.join(
     log_dir, f"run_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 )
 
-file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
+file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
 file_handler.setLevel(logging.ERROR)
 
-formatter = logging.Formatter(
-    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 file_handler.setFormatter(formatter)
 
 logger.addHandler(file_handler)
@@ -61,13 +69,12 @@ print(f"log save in {log_file_path}")
 
 
 def add_hard_breaks_to_references(response_content: str) -> str:
-    """
-    """
-    pattern = r"(##\s*References\s*\n)(.*?)(\n##\s|\Z)"  # 
+    """ """
+    pattern = r"(##\s*References\s*\n)(.*?)(\n##\s|\Z)"  #
     match = re.search(pattern, response_content, re.DOTALL | re.IGNORECASE)
 
     if not match:
-        return response_content  # 
+        return response_content  #
 
     header = match.group(1)
     refs_block = match.group(2)
@@ -75,8 +82,8 @@ def add_hard_breaks_to_references(response_content: str) -> str:
 
     updated_refs = []
     for line in refs_block.splitlines():
-        if re.match(r"\s*\[\^\^\d+\]", line):  # 
-            updated_line = line.rstrip() + "\n\n"  # 
+        if re.match(r"\s*\[\^\^\d+\]", line):  #
+            updated_line = line.rstrip() + "\n\n"  #
         else:
             updated_line = line
         updated_refs.append(updated_line)
@@ -91,6 +98,7 @@ def add_hard_breaks_to_references(response_content: str) -> str:
     )
 
     return new_content
+
 
 class ReferencePool:
     """
@@ -129,36 +137,55 @@ class AdvancedSearchSystem:
         verbose=True,
         mid_path="./middleresult.txt",
         report_path="./report.txt",
-        use_template=True,
         max_iterations=2,
-        questions_per_iteration=5,
+        questions_per_iteration=2,
         is_report=False,
         chosen_tools: list[str] = None,  ## None for using all tools
         error_log_path: str = "",
-        using_model = "gpt4_1",
+        using_model="gpt4_1",
+        session_log_dir: str = None,  # NEW: Session log directory
+        validation_batch_size: int = 12,
+        candidate_pool_max: int = 250,
+        enable_llm_prescreen: bool = True,
     ):
         self._action_blocks: dict[int, dict] = {}
-        self.ref_pool = ReferencePool() 
+        self.ref_pool = ReferencePool()
         self.all_links_of_system: list[str] = []
         self.chosen_tools = chosen_tools
         self.is_report = is_report
+        self.validation_batch_size = max(0, int(validation_batch_size))
+        self.candidate_pool_max = max(50, int(candidate_pool_max))
+        self.enable_llm_prescreen = bool(enable_llm_prescreen)
         self.verbose = verbose
         self.max_iterations = max_iterations
         self.questions_per_iteration = questions_per_iteration
         self.block_callback = None
-        self.use_template = use_template
         self.mid_path = mid_path
         self.report_path = report_path
         self.knowledge_chunks = []
+        self.session_log_dir = session_log_dir
+
+        # Setup logging directory first
+        log_dir = os.path.join(ROOT_DIR, "logs")
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
 
         if error_log_path == "":
-            log_dir = os.path.join(ROOT_DIR, "logs")
-            if not os.path.exists(log_dir):
-                os.makedirs(log_dir, exist_ok=True)
             error_log_path = os.path.join(
                 log_dir, f"error_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
             )
         self.error_log_path = error_log_path
+
+        # Initialize new components
+        self.research_context = ResearchContext(current_knowledge="", iteration_count=0)
+        self.bibliography = BibliographyRegistry(
+            Path(
+                os.path.join(
+                    log_dir,
+                    f"bibliography_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                )
+            )
+        )
 
         self.all_links_of_system = []
         self.questions_by_iteration = {}
@@ -194,6 +221,533 @@ class AdvancedSearchSystem:
             self.tool_query_model = get_gpt4_1_mini()
             self.report_model = get_gpt4_1()
 
+        # Initialize ToolParseAgent (using fast model)
+        self.tool_parse_agent = ToolParseAgent(self.fast_model)
+
+        # Report-only: candidate pool cache (HGNC-like symbols) to support long-tail target discovery
+        self._candidate_symbols: set[str] = set()
+        self._validated_symbols: set[str] = set()
+        # Report-only: "pinned" symbols that must not be evicted by candidate_pool_max truncation.
+        # This prevents long-tail candidates from disappearing after they were selected/validated once.
+        self._pinned_symbols: set[str] = set()
+        # Report-only: simple stats to rank candidates (avoid alphabetical bias)
+        self._candidate_stats: dict[str, dict] = {}
+        # Report-only: avoid spamming pool profiling every iteration
+        self._last_pool_profile_iteration: int = -1
+
+    def _frequent_symbol_prefix_hints(
+        self, symbols: list[str], *, min_count: int = 4, max_hints: int = 8
+    ) -> list[str]:
+        """
+        Report-only helper: infer recurring symbol-prefix pattern hints from the current pool itself.
+        This avoids hard-coding any domain categories. Hints are used to guide LLM expansion toward
+        "items similar to what already appears" (by naming patterns) without leaking specific targets.
+        """
+        if not symbols:
+            return []
+        counts: dict[str, int] = {}
+        # Use short alphabetic prefixes (3-5 chars) as weak naming-pattern signals (e.g., ABC, CXCR, etc.).
+        for s in symbols:
+            if not isinstance(s, str):
+                continue
+            t = s.strip().upper()
+            if not t:
+                continue
+            for k in (3, 4, 5):
+                if len(t) >= k and t[:k].isalpha():
+                    p = t[:k]
+                    counts[p] = counts.get(p, 0) + 1
+
+        # Prefer longer prefixes when they occur (more specific), but still require frequency.
+        hints = [p for p, c in counts.items() if c >= int(min_count)]
+        hints.sort(key=lambda p: (-len(p), -counts.get(p, 0), p))
+
+        # De-dup: if a longer prefix is present, drop its shorter prefix to avoid redundancy.
+        out: list[str] = []
+        for p in hints:
+            if any(
+                p.startswith(existing) or existing.startswith(p) for existing in out
+            ):
+                # Keep only the more specific one (longer)
+                if any(existing.startswith(p) for existing in out):
+                    continue
+            out.append(p)
+            if len(out) >= int(max_hints):
+                break
+        return out
+
+    async def _profile_candidate_pool_llm(self, query: str, symbols: list[str]) -> dict:
+
+        if not symbols:
+            return {}
+
+        # Bound prompt size: provide a representative prefix (pool_list is already ranked)
+        seed = symbols[: min(len(symbols), 180)]
+
+        prompt = (
+            "You are analyzing a candidate pool (HGNC gene symbols) for target discovery.\n"
+            "Goal: summarize the pool composition and propose gap-filling exploration queries.\n"
+            "Rules:\n"
+            "1) Output MUST be valid JSON (an object).\n"
+            "2) Do NOT mention any specific gene symbols in the output.\n"
+            "3) Keep it conservative and intent-aligned with the user query.\n"
+            "4) Proposed queries must be self-contained and executable as search/database queries.\n"
+            "5) At least 2 proposed queries MUST explicitly request a machine-extractable list/table of gene symbols.\n"
+            "6) Do NOT use subjective words like 'novel/emerging/promising' as the primary search anchor.\n"
+            "JSON schema:\n"
+            "{\n"
+            '  "bucket_counts": {"surface_receptor":0,"surface_enzyme":0,"adhesion_ecm":0,"transporter":0,"secreted":0,'
+            '"immune_lineage":0,"intracellular_signaling":0,"nuclear_tf":0,"cell_cycle":0,"metabolic":0,"other_unknown":0},\n'
+            '  "bias_notes": ["..."],\n'
+            '  "gap_fill_queries": ["...", "...", "..."]\n'
+            "}\n"
+            f"User query: {query}\n"
+            f"Candidate symbols (subset, ranked): {seed}\n"
+        )
+
+        try:
+            resp = await invoke_with_timeout_and_retry(
+                self.fast_model,
+                prompt,
+                timeout=60.0,
+                max_retries=2,
+                retry_delay=10.0,
+            )
+            data = safe_json_from_text(resp.content)
+            if isinstance(data, dict):
+                return data
+        except Exception as e:
+            logger.warning(f"Report-only candidate pool profiling failed: {e}")
+
+        return {}
+
+    def _hard_filter_candidate_symbols(self, symbols: list[str]) -> list[str]:
+        """
+        Report-mode normalization filter for candidate gene symbols.
+
+        The goal is to remove clearly ambiguous or incomplete tokens before downstream
+        validation, while keeping the rule set intentionally small to preserve recall.
+        """
+        if not symbols:
+            return []
+
+        # Ambiguous aliases or family-level shorthands that are often not stable HGNC symbols.
+        blacklist = {
+            "ER",  # ambiguous; often means ESR1/ESR2 but not HGNC itself
+            "CYP",  # family prefix, not a symbol
+            "AKT",  # family, not a symbol (AKT1/2/3)
+            "JNK",  # family, not a symbol
+            "JNK1",  # common alias for MAPK8 (not HGNC)
+            "CRAF",  # common alias for RAF1 (not HGNC)
+            "53BP1",  # common alias for TP53BP1 (not HGNC)
+        }
+
+        # Prefixes that are typically incomplete unless followed by a numeric suffix.
+        incomplete_prefixes = ("AKR1C",)
+
+        out = []
+        for s in symbols:
+            if not isinstance(s, str):
+                continue
+            ss = s.strip().upper()
+            if not ss:
+                continue
+            # Remove incomplete prefix-only forms (keep explicit numbered symbols).
+            if ss.startswith(incomplete_prefixes) and not ss[-1].isdigit():
+                continue
+            # Drop short ambiguous tokens; keep only explicit, high-confidence exceptions.
+            if len(ss) <= 2 and ss not in {"AR"}:
+                continue
+            out.append(ss)
+
+        return sorted(set(out))
+
+    def _update_candidate_stats(
+        self, symbol: str, tool_name: str, iteration: int
+    ) -> None:
+        s = symbol.upper()
+        st = self._candidate_stats.get(s)
+        if not st:
+            st = {"count": 0, "last_seen": -1, "sources": set()}
+            self._candidate_stats[s] = st
+        st["count"] += 1
+        st["last_seen"] = max(int(st.get("last_seen", -1)), int(iteration))
+        try:
+            st["sources"].add(tool_name)
+        except Exception:
+            pass
+
+    def _get_ranked_candidate_pool(self) -> list[str]:
+        """
+        Deterministic, non-alphabetical ordering to avoid systematic bias.
+        IMPORTANT: keep this generic (no family-prefix heuristics) to avoid leaking specific target families.
+        """
+        pool = list(self._candidate_symbols)
+        pool = self._hard_filter_candidate_symbols(pool)
+
+        def key_fn(s: str):
+            st = self._candidate_stats.get(s, {})
+            return (
+                -int(st.get("last_seen", -1)),
+                -int(st.get("count", 0)),
+                -len(st.get("sources", []))
+                if isinstance(st.get("sources", None), set)
+                else 0,
+                s,
+            )
+
+        pool.sort(key=key_fn)
+        # Report-only: keep pinned symbols within the truncated pool so they remain visible in later iterations/logs.
+        if self.is_report and getattr(self, "_pinned_symbols", None):
+            pinned = [s for s in pool if s in self._pinned_symbols]
+            rest = [s for s in pool if s not in self._pinned_symbols]
+            pool = pinned + rest
+
+        return pool[: self.candidate_pool_max]
+
+    def _extract_candidate_symbols_regex(self, texts: list[str]) -> list[str]:
+        """
+        Broad, conservative-ish regex harvest of HGNC-like symbols from raw tool text.
+        This is intentionally permissive; we'll optionally clean with LLM afterward (report-mode only).
+        """
+        if not texts:
+            return []
+
+        # Very common non-gene tokens to drop early (LLM will further clean).
+        stop = {
+            "DNA",
+            "RNA",
+            "ATP",
+            "GTP",
+            "ADMET",
+            "DMSO",
+            "COVID",
+            "SARS",
+            "GO",
+            "KEGG",
+            "PDB",
+            "FDA",
+            "IC50",
+            "EC50",
+            "KD",
+            "KI",
+            "MHC",
+            "TCR",
+        }
+
+        # HGNC symbols are often 2-10 chars, uppercase letters/digits.
+        pattern = re.compile(r"\b[A-Z0-9]{2,10}\b")
+        found: set[str] = set()
+        for t in texts:
+            if not t:
+                continue
+            for m in pattern.findall(t):
+                if m in stop:
+                    continue
+                # Avoid pure numbers
+                if m.isdigit():
+                    continue
+                found.add(m)
+        # Keep deterministic order
+        return sorted(found)
+
+    async def _clean_candidate_symbols_llm(self, symbols: list[str]) -> list[str]:
+        """
+        LLM-based cleaning pass: keep only plausible HGNC gene symbols.
+        This does NOT try to discover new symbols; it only filters/normalizes.
+        """
+        if not symbols:
+            return []
+
+        # Hard cap to control prompt size
+        symbols = symbols[: max(200, min(len(symbols), self.candidate_pool_max))]
+
+        prompt = (
+            "You are cleaning a noisy list of tokens extracted from biomedical text.\n"
+            "Task: return ONLY plausible human HGNC gene symbols.\n"
+            "Rules:\n"
+            "1) Output MUST be a JSON array of strings.\n"
+            "2) Keep tokens that look like real gene symbols (e.g., FGFR4, ERBB2, SLC7A11).\n"
+            "3) Remove generic abbreviations (e.g., DNA, RNA, ATP, GO, KEGG, IC50), units, and non-gene words.\n"
+            "4) Do NOT invent new symbols. Only filter from the provided list.\n"
+            "5) Keep uppercase letters/digits; if unsure, keep it.\n"
+            f"Input tokens ({len(symbols)}): {symbols}\n"
+        )
+
+        try:
+            resp = await invoke_with_timeout_and_retry(
+                self.fast_model,
+                prompt,
+                timeout=60.0,
+                max_retries=2,
+                retry_delay=10.0,
+            )
+            cleaned = extract_and_convert_list(resp.content)
+            if isinstance(cleaned, list):
+                # Normalize
+                out = []
+                for s in cleaned:
+                    if not isinstance(s, str):
+                        continue
+                    ss = s.strip().upper()
+                    if ss:
+                        out.append(ss)
+                # Dedup & cap
+                out = sorted(set(out))[: self.candidate_pool_max]
+                return out
+        except Exception as e:
+            logger.warning(f"LLM cleaning for candidate symbols failed: {e}")
+
+        # Fallback: regex-only list
+        return sorted(set(symbols))[: self.candidate_pool_max]
+
+    async def _prescreen_symbols_for_validation_llm(
+        self, query: str, symbols: list[str]
+    ) -> dict:
+        """
+        Report-only: LLM prescreen to prioritize which symbols to validate next.
+        This is allowed to be more assertive in deprioritizing candidates for validation, while remaining
+        conservative about permanently dropping symbols from the global pool.
+        """
+        if not symbols:
+            return {"selected": [], "deprioritized": [], "drop": []}
+
+        # Keep prompt small and stable
+        symbols = symbols[: self.candidate_pool_max]
+        limit = min(self.validation_batch_size, len(symbols))
+        if limit <= 0:
+            return {"selected": [], "deprioritized": [], "drop": []}
+
+        prompt = (
+            "You are prioritizing which candidate gene symbols to validate next with structured target tools.\n"
+            "You must follow the user's constraints from the query.\n"
+            "Task:\n"
+            f"- Select up to {limit} symbols that are MOST worth validating next.\n"
+            "- Identify symbols that should be deprioritized for validation in this iteration because they are unlikely to match the user's constraints.\n"
+            "- You MAY propose a drop list ONLY for (a) obvious non-gene artifacts, OR (b) symbols that do not match the user's query.\n"
+            "Rules:\n"
+            "1) Output MUST be JSON with keys: selected (array of strings), deprioritized (array of strings), drop (array of strings).\n"
+            "2) Do NOT invent new symbols.\n"
+            "3) If unsure, keep the symbol (do not put it into drop).\n"
+            f"User query: {query}\n"
+            f"Symbols: {symbols}\n"
+        )
+
+        try:
+            resp = await invoke_with_timeout_and_retry(
+                self.fast_model,
+                prompt,
+                timeout=60.0,
+                max_retries=2,
+                retry_delay=10.0,
+            )
+            data = safe_json_from_text(resp.content)
+            if isinstance(data, dict):
+                sel = data.get("selected", [])
+                dep = data.get("deprioritized", data.get("excluded", []))
+                drp = data.get("drop", [])
+                if isinstance(sel, list) and isinstance(dep, list):
+                    sel2 = []
+                    for s in sel:
+                        if isinstance(s, str) and s.strip():
+                            sel2.append(s.strip().upper())
+                    dep2 = []
+                    for s in dep:
+                        if isinstance(s, str) and s.strip():
+                            dep2.append(s.strip().upper())
+                    drp2 = []
+                    if isinstance(drp, list):
+                        for s in drp:
+                            if isinstance(s, str) and s.strip():
+                                drp2.append(s.strip().upper())
+                    # Dedup + cap
+                    sel2 = [s for s in sel2 if s in set(symbols)]
+                    sel2 = list(dict.fromkeys(sel2))[:limit]
+                    dep2 = [s for s in dep2 if s in set(symbols) and s not in set(sel2)]
+                    dep2 = list(dict.fromkeys(dep2))
+                    # drop must be a subset of deprioritized/excluded in spirit; enforce conservatively
+                    # Also: only allow dropping symbols explicitly mentioned in the user query (case-insensitive),
+                    # unless they are obvious non-gene artifacts (handled by hard filtering elsewhere).
+                    q_up = (query or "").upper()
+                    dep2_set = set(dep2)
+                    # If the model proposes drop items, treat them as deprioritized too.
+                    for s in drp2:
+                        if s in set(symbols) and s not in set(sel2):
+                            dep2_set.add(s)
+                    dep2 = list(
+                        dict.fromkeys(
+                            [s for s in dep2 if s in dep2_set]
+                            + [s for s in drp2 if s in dep2_set]
+                        )
+                    )
+                    drp2 = [s for s in drp2 if s in set(symbols) and (s in q_up)]
+                    drp2 = list(dict.fromkeys(drp2))
+                    return {"selected": sel2, "deprioritized": dep2, "drop": drp2}
+        except Exception as e:
+            logger.warning(f"LLM prescreen for validation failed: {e}")
+
+        # Fallback: just take the first N symbols (deterministic)
+        return {"selected": symbols[:limit], "deprioritized": [], "drop": []}
+
+    async def _propose_additional_candidates_llm(
+        self, query: str, symbols: list[str], k: int
+    ) -> list[str]:
+        """
+        Report-only: small "divergence" step.
+        Propose additional plausible HGNC-like gene symbols that may be missing from the pool,
+        inspired by the current pool and the user intent. These are hypotheses and must be validated later.
+        Constraints: keep generic, no target leakage, no hard-coded examples.
+        """
+        if k <= 0:
+            return []
+        if not symbols:
+            return []
+
+        # Keep prompt size bounded; provide a representative subset
+        seed = symbols[: max(60, min(len(symbols), 120))]
+        prefix_hints = self._frequent_symbol_prefix_hints(
+            symbols, min_count=4, max_hints=8
+        )
+
+        prompt = (
+            "You are helping expand a candidate pool for target discovery.\n"
+            "Task: propose up to N additional plausible human HGNC gene symbols that might be missing.\n"
+            "Constraints:\n"
+            "- Do NOT repeat any symbol already in the pool.\n"
+            "- Do NOT invent obviously invalid tokens; propose only symbols you believe are real gene symbols.\n"
+            "- Keep proposals aligned with the user's constraints in the query.\n"
+            "- Use the pool itself to infer recurring naming/symbol patterns; propose a few plausible missing symbols following similar patterns if they fit the user intent.\n"
+            "- Output MUST be a JSON array of strings.\n"
+            f"N={int(k)}\n"
+            f"User query: {query}\n"
+            f"Current pool (subset): {seed}\n"
+            f"Prefix-pattern hints inferred from the pool (optional guidance): {prefix_hints}\n"
+        )
+
+        try:
+            resp = await invoke_with_timeout_and_retry(
+                self.fast_model,
+                prompt,
+                timeout=60.0,
+                max_retries=2,
+                retry_delay=10.0,
+            )
+            proposed = extract_and_convert_list(resp.content)
+            if isinstance(proposed, list):
+                out: list[str] = []
+                existing = set(s.upper() for s in symbols if isinstance(s, str))
+                for s in proposed:
+                    if not isinstance(s, str):
+                        continue
+                    ss = s.strip().upper()
+                    if not ss:
+                        continue
+                    if ss in existing:
+                        continue
+                    # Must look HGNC-like
+                    if not re.fullmatch(r"[A-Z0-9]{2,10}", ss):
+                        continue
+                    out.append(ss)
+                out = self._hard_filter_candidate_symbols(out)
+                return out[: int(k)]
+        except Exception as e:
+            logger.warning(f"LLM candidate expansion failed: {e}")
+
+        return []
+
+    def _mcp_payload_to_json(self, payload):
+        """
+        MCP tools often return: [{'type':'text','text':'{...json...}', ...}, ...]
+        Return parsed JSON when possible; otherwise return raw payload.
+        """
+        try:
+            if isinstance(payload, list) and payload:
+                first = payload[0]
+                if isinstance(first, dict) and isinstance(first.get("text"), str):
+                    txt = first["text"]
+                    return json.loads(txt)
+        except Exception:
+            pass
+        return payload
+
+    async def _validate_candidate_symbols(self, symbols: list[str]) -> list[dict]:
+        """
+        Lightweight validation for a small batch of symbols (report-only):
+        - GO CC terms (membrane/extracellular)
+        - target classes
+        - associated diseases (top few)
+        """
+        if not symbols:
+            return []
+
+        # Limit to configured batch size (caller may already prescreen/order)
+        batch = symbols[: self.validation_batch_size]
+        sem = asyncio.Semaphore(5)
+
+        async def one(sym: str) -> dict:
+            async with sem:
+                out = {"symbol": sym, "go_cc": [], "classes": [], "diseases": []}
+                try:
+                    go_raw = await self.mcp_tool_client.call_tool(
+                        "get_target_gene_ontology_by_name", {"target_name": sym}
+                    )
+                    go = self._mcp_payload_to_json(go_raw)
+                    # OpenTargets shape
+                    terms = (
+                        go.get("data", {}).get("target", {}).get("geneOntology", [])
+                        if isinstance(go, dict)
+                        else []
+                    )
+                    out["go_cc"] = [
+                        t.get("term", {}).get("name")
+                        for t in terms
+                        if isinstance(t, dict) and t.get("aspect") == "C"
+                    ][:8]
+                except Exception:
+                    pass
+                try:
+                    cls_raw = await self.mcp_tool_client.call_tool(
+                        "get_target_classes_by_name", {"target_name": sym}
+                    )
+                    cls = self._mcp_payload_to_json(cls_raw)
+                    rows = (
+                        cls.get("data", {}).get("target", {}).get("targetClass", [])
+                        if isinstance(cls, dict)
+                        else []
+                    )
+                    out["classes"] = [
+                        r.get("label")
+                        for r in rows
+                        if isinstance(r, dict) and r.get("label")
+                    ][:6]
+                except Exception:
+                    pass
+                try:
+                    dis_raw = await self.mcp_tool_client.call_tool(
+                        "get_associated_diseases_phenotypes_by_target_name",
+                        {"target_name": sym},
+                    )
+                    dis = self._mcp_payload_to_json(dis_raw)
+                    rows = (
+                        dis.get("data", {})
+                        .get("target", {})
+                        .get("associatedDiseases", {})
+                        .get("rows", [])
+                        if isinstance(dis, dict)
+                        else []
+                    )
+                    out["diseases"] = [
+                        r.get("disease", {}).get("name")
+                        for r in rows
+                        if isinstance(r, dict) and r.get("disease")
+                    ][:5]
+                except Exception:
+                    pass
+                return out
+
+        results = await asyncio.gather(*[one(s) for s in batch])
+        return [r for r in results if r]
+
     async def _get_follow_up_questions(
         self, current_knowledge: str, query: str
     ) -> List[str]:
@@ -205,6 +759,18 @@ class AdvancedSearchSystem:
         chance = 3
         current_try = 0
         while current_try < chance:
+            # Report-mode only: add generic, non-leaky constraints to make sub-queries executable
+            # and list-producing (helps preserve long-tail candidates without naming any target/family).
+            report_mode_constraints = ""
+            if self.is_report:
+                report_mode_constraints = """
+
+                ## Report-mode constraints (generic; do not add special-case keywords or examples)
+                - Every sub_query must be self-contained and executable without referring to previous sub-queries or their outputs.
+                - Do NOT use subjective evaluation words (e.g., "novel", "emerging", "promising") as the primary search anchor.
+                - At least 2 sub-queries MUST explicitly request a machine-extractable list/table of concrete candidate identifiers
+                  (i.e., extractable gene-symbol lists/signatures/tables suitable for downstream validation), rather than narrative-only answers.
+                """
             if self.questions_by_iteration:
                 prompt = f"""
                 # Biomedical Research Intelligent Search Assistant
@@ -240,6 +806,7 @@ class AdvancedSearchSystem:
                 - Use terminology CONSISTENT with the main query, preserving specialized terms without arbitrary modifications.
                 - Each query should target different aspects of the research question
                 - Queries should be specific and actionable
+                {report_mode_constraints}
                 """
             else:
                 prompt = f"""
@@ -274,6 +841,7 @@ class AdvancedSearchSystem:
                 - Use terminology CONSISTENT with the main query, preserving specialized terms without arbitrary modifications.
                 - Each query should target different aspects of the research question
                 - Queries should be specific and actionable
+                {report_mode_constraints}
                 """
 
             try:
@@ -294,19 +862,20 @@ class AdvancedSearchSystem:
                 logger.warning(retry_msg)
                 log_msg_retry = f"[{datetime.now().isoformat()}] {retry_msg}\n"
                 write_log_process_safe(self.error_log_path, log_msg_retry)
-                await asyncio.sleep(5) 
+                await asyncio.sleep(5)
                 continue
 
             # try to parse the response in JSON format
             try:
                 response_text = response.content
 
-                logger.info(f"important info stream in for process 0: break query in subquery")
-                logger.info(f"important info stream in for process 0: prompt: {prompt}")   
-                logger.info(f"important info stream in for process 0: planning Agent {response_text}")   
-
-
-
+                logger.info(
+                    f"important info stream in for process 0: break query in subquery"
+                )
+                logger.info(f"important info stream in for process 0: prompt: {prompt}")
+                logger.info(
+                    f"important info stream in for process 0: planning Agent {response_text}"
+                )
 
                 json_start = response_text.find("{")
                 json_end = response_text.rfind("}") + 1
@@ -335,6 +904,24 @@ class AdvancedSearchSystem:
                                 )
                             ]
                         )
+
+                        # Log Planning Agent Activity
+                        if hasattr(self, "trace_logger"):
+                            iteration_display = len(self.questions_by_iteration)
+                            self.trace_logger.log_phase(
+                                "Planning", iteration=iteration_display
+                            )
+                            self.trace_logger.log_agent_activity(
+                                "Planner",
+                                prompt,
+                                {
+                                    "thoughts": thoughts_content,
+                                    "strategy": parsed_response.get("strategy", []),
+                                    "sub_queries": questions,
+                                },
+                                thoughts=thoughts_content,
+                            )
+                            self.trace_logger.log_sub_queries(questions)
 
                         break
                     else:
@@ -437,9 +1024,10 @@ class AdvancedSearchSystem:
 
         return thoughts_result, strategy_result
 
-    async def process_multiple_knowledge_chunks(self, query: str, current_key_info: str) -> str:
-        """
-        """
+    async def process_multiple_knowledge_chunks(
+        self, query: str, current_key_info: str
+    ) -> str:
+        """ """
 
         if not hasattr(self, "knowledge_chunks") or not self.knowledge_chunks:
             return current_key_info.strip()
@@ -450,7 +1038,7 @@ class AdvancedSearchSystem:
                 key_info = chunk.get("key_info", "").strip()
                 if key_info:
                     lines.append(key_info)
-                    
+
             knowledge_raw_md = "\n\n".join(lines)
 
             prompt = f"""
@@ -469,7 +1057,9 @@ class AdvancedSearchSystem:
             """.strip()
 
         except Exception as e:
-            logger.warning(f"process_multiple_knowledge_chunks (preprocessing) failed: {e}")
+            logger.warning(
+                f"process_multiple_knowledge_chunks (preprocessing) failed: {e}"
+            )
             return current_key_info.strip()
 
         try:
@@ -500,9 +1090,11 @@ class AdvancedSearchSystem:
 
         try:
             logger.info(f"Retrieving template for query: {query}")
-            # template = retrieve_small_template(query)   # for easy question, one senctence guide
-            template = retrieve_large_template(query)     # for complicated question
-            print(f"my template is {template}")
+            template = retrieve_large_template(query)
+            # Log the template
+            if hasattr(self, "trace_logger"):
+                self.trace_logger.log_template(template)
+
             tuple_examples = []
             for i in range(self.questions_per_iteration):
                 tuple_examples.append(
@@ -512,7 +1104,9 @@ class AdvancedSearchSystem:
         except Exception as e:
             logger.warning(f"Failed to retrieve template: {e}")
             template = "No template available for this query."
-            output_format_example = "[('Tool_Index_1', 'Tool_Name_1', 'Search_Query_1'), ...]"
+            output_format_example = (
+                "[('Tool_Index_1', 'Tool_Name_1', 'Search_Query_1'), ...]"
+            )
 
         chance = 3
         current_try = 0
@@ -531,11 +1125,17 @@ class AdvancedSearchSystem:
                 - Gathered knowledge: {current_knowledge}
                 
                 ## Your Task
-                Analyze what's missing to fully answer the main query. Generate exactly {self.questions_per_iteration} new search queries using different tools.
+                Analyze what's missing to fully answer the main query. Generate exactly {self.questions_per_iteration} focused sub-questions for downstream tool selection.
                 
                 ## Reference Example
                 The following is a detailed example of how to decompose a similar research query into multiple search objectives and tools:
-                {template}
+                <thinking_template only for task:{query}, do not use it directly, start from here>
+                            {template} for in user query: {query}
+                <thinking_template only for task:{query}, do not use it directly, end from here>
+                - The thinking template is only a reference supplement to help resolve implicit preferences when user requirements are unclear.
+                - If the user provides a specific, concrete action strategy or clear preferences/constraints, strictly prioritize the user's plan and ignore any template preferences that do not strongly connect to the main query.
+                - If the thinking template is weakly related or irrelevant to the main query, use it selectively or ignore it to avoid drifting.
+                - IMPORTANT: the template may mention tools. Your `sub_queries` MUST NOT include any tool names, tool tags, brackets, or tool-routing hints.
                 
                 ## Guidelines
                 1. Identify key information gaps in current knowledge
@@ -544,13 +1144,14 @@ class AdvancedSearchSystem:
                 4. Break down complex concepts or relationships into distinct, independently answerable questions.
                 5. Keep sub-queries concise, specific, and straightforward (e.g., inquire about definitions, roles, or relationships, such as "What is X?" or "How does X relate to Y?").
                 6. Avoid repeating past searches
+                7. Each `sub_queries[i]` MUST be a normal sentence ending with a question mark ("?") and MUST NOT contain tool names or any bracketed tool syntax.
                 
                 ## Output Format
                 You must provide your response in the following structured JSON format:
                 {{
                     "thoughts": "Brief analysis of the problem and what needs investigation",
-                    "strategy": ["1", "2", "3", "4", "5"],
-                    "sub_queries": ["Search_Query_1", "Search_Query_2", "Search_Query_3", "Search_Query_4", "Search_Query_5"]
+                    "strategy": ["..."],
+                    "sub_queries": ["Question_1", "Question_2", "..."]
                 }}
                 
                 ## Important Notes
@@ -568,11 +1169,17 @@ class AdvancedSearchSystem:
                 - This is the first search iteration
                 
                 ## Your Task
-                Select exactly {self.questions_per_iteration} search tools and create effective search queries to gather information for answering the main query.
+                Analyze what's missing to fully answer the main query. Generate exactly {self.questions_per_iteration} focused sub-questions for downstream tool selection.
                 
                 ## Reference Example
                 The following is a detailed example of how to decompose a similar research query into multiple search objectives and tools:
-                {template}
+                <thinking_template only for task:{query}, do not use it directly, start from here>
+                            {template} for in user query: {query}
+                <thinking_template only for task:{query}, do not use it directly, end from here>
+                - The thinking template is only a reference supplement to help resolve implicit preferences when user requirements are unclear.
+                - If the user provides a specific, concrete action strategy or clear preferences/constraints, strictly prioritize the user's plan and ignore any template preferences that do not strongly connect to the main query.
+                - If the thinking template is weakly related or irrelevant to the main query, use it selectively or ignore it to avoid drifting.
+                - IMPORTANT: the template may mention tools. Your `sub_queries` MUST NOT include any tool names, tool tags, brackets, or tool-routing hints.
                 
                 ## Guidelines
                 1. Identify key information gaps in current knowledge
@@ -581,13 +1188,14 @@ class AdvancedSearchSystem:
                 4. Break down complex concepts or relationships into distinct, independently answerable questions.
                 5. Keep sub-queries concise, specific, and straightforward (e.g., inquire about definitions, roles, or relationships, such as "What is X?" or "How does X relate to Y?").
                 6. Avoid repeating past searches
+                7. Each `sub_queries[i]` MUST be a normal sentence ending with a question mark ("?") and MUST NOT contain tool names or any bracketed tool syntax.
                 
                 ## Output Format
                 You must provide your response in the following structured JSON format:
                 {{
                     "thoughts": "Brief analysis of the problem and what needs investigation",
-                    "strategy": ["1", "2", "3", "4", "5"],
-                    "sub_queries": ["Search_Query_1", "Search_Query_2", "Search_Query_3", "Search_Query_4", "Search_Query_5"]
+                    "strategy": ["..."],
+                    "sub_queries": ["Question_1", "Question_2", "..."]
                 }}
                 
                 ## Important Notes
@@ -595,7 +1203,6 @@ class AdvancedSearchSystem:
                 - Each query should target different aspects of the research question
                 - Queries should be specific and actionable
                 """
-
             try:
                 response = await invoke_with_timeout_and_retry(
                     self.reasoning_model,
@@ -616,14 +1223,18 @@ class AdvancedSearchSystem:
                 logger.warning(retry_msg)
                 log_msg_retry = f"[{datetime.now().isoformat()}] {retry_msg}\n"
                 write_log_process_safe(self.error_log_path, log_msg_retry)
-                await asyncio.sleep(5)  
+                await asyncio.sleep(5)
                 continue
 
             try:
                 response_text = response.content
-                logger.info(f"important info stream in for process 0: break query in subquery")
-                logger.info(f"important info stream in for process 0: prompt: {prompt}")   
-                logger.info(f"important info stream in for process 0: planning Agent {response_text}")   
+                logger.info(
+                    f"important info stream in for process 0: break query in subquery"
+                )
+                logger.info(f"important info stream in for process 0: prompt: {prompt}")
+                logger.info(
+                    f"important info stream in for process 0: planning Agent {response_text}"
+                )
 
                 json_start = response_text.find("{")
                 json_end = response_text.rfind("}") + 1
@@ -651,6 +1262,25 @@ class AdvancedSearchSystem:
                                 )
                             ]
                         )
+
+                        # Trace: record the Planner output (actual generated sub-queries)
+                        if hasattr(self, "trace_logger"):
+                            iteration_display = len(self.questions_by_iteration)
+                            self.trace_logger.log_phase(
+                                "Planning", iteration=iteration_display
+                            )
+                            self.trace_logger.log_agent_activity(
+                                "Planner",
+                                prompt,
+                                {
+                                    "parse_mode": "json",
+                                    "thoughts": thoughts_content,
+                                    "strategy": parsed_response.get("strategy", []),
+                                    "sub_queries": questions,
+                                },
+                                thoughts=thoughts_content,
+                            )
+                            self.trace_logger.log_sub_queries(questions)
                         break
                     else:
                         raise ValueError("No valid tool queries in JSON response")
@@ -678,6 +1308,25 @@ class AdvancedSearchSystem:
                     thoughts_content, strategy_content = (
                         self._extract_thoughts_and_strategy(response.content)
                     )
+
+                    # Trace: record the Planner output (actual generated sub-queries)
+                    if hasattr(self, "trace_logger"):
+                        iteration_display = len(self.questions_by_iteration)
+                        self.trace_logger.log_phase(
+                            "Planning", iteration=iteration_display
+                        )
+                        self.trace_logger.log_agent_activity(
+                            "Planner",
+                            prompt,
+                            {
+                                "parse_mode": "legacy",
+                                "thoughts": thoughts_content,
+                                "strategy": strategy_content,
+                                "sub_queries": questions,
+                            },
+                            thoughts=thoughts_content,
+                        )
+                        self.trace_logger.log_sub_queries(questions)
                     break
 
         # Handle case where questions is still None after all retries
@@ -724,11 +1373,10 @@ class AdvancedSearchSystem:
 
         return response_content
 
-
     async def _extract_knowledge(
         self, facts_md: str, refs_in_round: List[Dict]
     ) -> Tuple[str, List[Dict]]:
-        """ 
+        """
         Extract key information from the provided facts and references.
         """
 
@@ -784,9 +1432,13 @@ class AdvancedSearchSystem:
             resp = await invoke_with_timeout_and_retry(
                 self.model, prompt, timeout=60.0, max_retries=3, retry_delay=30.0
             )
-            logger.info(f"important info stream in for process 5: extract_knowledge (Knowledge extraction Agent)")
-            logger.info(f"important info stream in for process 5: prompt: {prompt}")   
-            logger.info(f"important info stream in for process 5: _extract_knowledge (Knowledge extraction Agent): {resp.content}")   
+            logger.info(
+                f"important info stream in for process 5: extract_knowledge (Knowledge extraction Agent)"
+            )
+            logger.info(f"important info stream in for process 5: prompt: {prompt}")
+            logger.info(
+                f"important info stream in for process 5: _extract_knowledge (Knowledge extraction Agent): {resp.content}"
+            )
 
         except Exception as e:
             logger.warning(f"Failed to extract knowledge: {e}")
@@ -877,6 +1529,14 @@ class AdvancedSearchSystem:
             ...
             """
         else:
+            critic_report_constraints = ""
+            if self.is_report:
+                critic_report_constraints = """
+            ### Report-mode requirement (generic; no special-case keywords or examples)
+            - Your reflection must be anchored to concrete missing information.
+            - In Thoughts, include a short checklist of the most important missing evidence items (each item must name a specific missing attribute or missing evidence type).
+            - In Strategy, every numbered item must end with a single-line "NextQuery:" that is an executable query string for the next iteration.
+            """
 
             prompt_body = f"""
             ## Query ##
@@ -894,6 +1554,7 @@ class AdvancedSearchSystem:
             ### Instructions
             1. Critically reflect on progress and propose strategy for next round.
             2. When you mention evidence, cite with existing `[^^n]` numbers only.
+            {critic_report_constraints}
 
 
             ### Output Markdown Template
@@ -944,18 +1605,17 @@ class AdvancedSearchSystem:
             write_log_process_safe(self.error_log_path, log_msg)
             raise e
 
-
-
-
         response_content = remove_think_tags(response.content)
         response_content = add_hard_breaks_to_references(response_content)
 
         logger.info(f"important info stream in for process 6: answer query")
         logger.info(f"important info stream in for process 6: prompt: {prompt}")
-        logger.info(f"important info stream in for process 6: response_content: (Critic or answer query Agent) {response_content}")
-        
+        logger.info(
+            f"important info stream in for process 6: response_content: (Critic or answer query Agent) {response_content}"
+        )
 
         return response_content
+
     async def _generate_detailed_report(
         self, current_knowledge: str, findings: List[Dict], query: str, iteration: int
     ):
@@ -969,7 +1629,7 @@ class AdvancedSearchSystem:
                 {
                     "idx": idx,
                     "url": ref.link,
-                    "apa": ref.subtitle or "", 
+                    "apa": ref.subtitle or "",
                     "desc": ref.title,
                 }
             )
@@ -1058,8 +1718,6 @@ class AdvancedSearchSystem:
             response_content
         )
 
-
-
         logger.info(f"✅ Generated detailed research report for: {query}")
         logger.info(f"important info stream in for process 7: report")
         logger.info(f"prompt: {prompt}")
@@ -1098,9 +1756,7 @@ class AdvancedSearchSystem:
         """Initialize async components"""
 
         CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-        tool_type_info_path = os.path.join(
-            CURRENT_DIR, "cache_data", "tool_info.xlsx"
-        )
+        tool_type_info_path = os.path.join(CURRENT_DIR, "cache_data", "tool_info.xlsx")
         embedding_cache = os.path.join(
             CURRENT_DIR, "cache_data", "tool_desc_embedding.pkl"
         )
@@ -1157,7 +1813,17 @@ class AdvancedSearchSystem:
         logger.info("🔧      GENERAL TOOLS: %d", num_general_tools)
         logger.info("🔧      EXPERT TOOLS: %d", num_expert_tools)
 
-    async def analyze_topic(self, query: str) -> Dict:
+    async def analyze_topic(
+        self, query: str, question_id: str | int = "unknown"
+    ) -> Dict:
+        # Initialize Trace Logger
+        log_dir = (
+            self.session_log_dir
+            if self.session_log_dir
+            else os.path.join(ROOT_DIR, "logs")
+        )
+        self.trace_logger = ResearchTraceLogger(log_dir, query, question_id=question_id)
+
         logger.info("Starting research on topic: %s", query)
         logger.info("%s", "\n" + "=" * 80)
         logger.info("RESEARCH CONFIGURATION:")
@@ -1165,7 +1831,6 @@ class AdvancedSearchSystem:
         logger.info("Query: %s", query)
         logger.info("Max Iterations: %d", self.max_iterations)
         logger.info("Questions per Iteration: %d", self.questions_per_iteration)
-        logger.info("Use Template: %s", str(self.use_template))
         logger.info(
             "Available Tools: %d",
             len(self.mcp_tool_client.mcp_tools)
@@ -1178,20 +1843,16 @@ class AdvancedSearchSystem:
         current_knowledge = ""
         iteration = 0
 
-
         if self.verbose:
-            with open(self.mid_path , "a", encoding="utf-8") as f:
+            with open(self.mid_path, "a", encoding="utf-8") as f:
                 f.write(f"User Qeury : {query} \n")
-
 
         # Check if search engine is available
         if (
             len(self.mcp_tool_client.mcp_tools) == 0
             or self.mcp_tool_client.mcp_tools is None
         ):
-            error_msg = (
-                "Error: No mcp_tool_client.mcp_tools available. Please check your configuration."
-            )
+            error_msg = "Error: No mcp_tool_client.mcp_tools available. Please check your configuration."
 
             return {
                 "findings": [],
@@ -1203,24 +1864,22 @@ class AdvancedSearchSystem:
 
         while iteration < self.max_iterations:
             if self.verbose:
-                with open(self.mid_path , "a", encoding="utf-8") as f:
+                with open(self.mid_path, "a", encoding="utf-8") as f:
                     f.write(f"Iteration : {iteration} \n")
 
+            questions = await self._get_follow_up_questions_with_templates(
+                current_knowledge, query
+            )
 
-            if self.use_template:
-                questions = await self._get_follow_up_questions_with_templates(
-                    current_knowledge, query
-                )
-            else:
-                questions = await self._get_follow_up_questions(
-                    current_knowledge, query
-                )
-
-            logger.info(f"important info stream in iteration {iteration} for process 1: query and subquery")
-            logger.info(f"important info stream in iteration {iteration} for process 1; query: {query}")
-            logger.info(f"important info stream in iteration {iteration} for process 1; questions: {questions}")   
-
-
+            logger.info(
+                f"important info stream in iteration {iteration} for process 1: query and subquery"
+            )
+            logger.info(
+                f"important info stream in iteration {iteration} for process 1; query: {query}"
+            )
+            logger.info(
+                f"important info stream in iteration {iteration} for process 1; questions: {questions}"
+            )
 
             question_texts = questions
             self.questions_by_iteration[iteration] = question_texts
@@ -1232,16 +1891,19 @@ class AdvancedSearchSystem:
                 logger.debug("Tool and input list: %s", str(tool_and_input_list))
 
                 if self.verbose:
-                    with open(self.mid_path , "a", encoding="utf-8") as f:
+                    with open(self.mid_path, "a", encoding="utf-8") as f:
                         f.write(f"\n Tool and tool query in subquery : {question} : \n")
                         f.write(f"\n {tool_and_input_list} \n")
 
-
-                logger.info(f"important info stream in iteration {iteration} for process 2: Tool and input list for subquery (Tool calling agents)")
-                logger.info(f"important info stream in iteration {iteration} for process 2: subquery: {question}")   
-                logger.info(f"important info stream in iteration {iteration} for process 2: tool_and_input_list: {tool_and_input_list}")   
-
-
+                logger.info(
+                    f"important info stream in iteration {iteration} for process 2: Tool and input list for subquery (Tool calling agents)"
+                )
+                logger.info(
+                    f"important info stream in iteration {iteration} for process 2: subquery: {question}"
+                )
+                logger.info(
+                    f"important info stream in iteration {iteration} for process 2: tool_and_input_list: {tool_and_input_list}"
+                )
 
                 try:
                     tool_calling_results = (
@@ -1254,113 +1916,385 @@ class AdvancedSearchSystem:
                 logger.debug("debug: tool_calling_results")
                 logger.debug("Tool calling results: %s", str(tool_calling_results))
 
-                logger.info(f"important info stream in iteration {iteration} for process 3: Tool result for subquery")
-                logger.info(f"important info stream in iteration {iteration} for process 3: subquery: {question}")   
-                logger.info(f"important info stream in iteration {iteration} for process 3: tool_calling_results: {tool_calling_results}")   
+                logger.info(
+                    f"important info stream in iteration {iteration} for process 3: Tool result for subquery"
+                )
+                logger.info(
+                    f"important info stream in iteration {iteration} for process 3: subquery: {question}"
+                )
+                logger.info(
+                    f"important info stream in iteration {iteration} for process 3: tool_calling_results: {tool_calling_results}"
+                )
 
                 try:
-                    logger.debug("Processing tool results before extraction")
-                    parsed_list = await asyncio.gather(
-                        *(
-                            parse_single(
-                                tool_calling_results[i], 
-                                query=tool_and_input_list[i]["item"],
-                            ) 
-                            for i in range(len(tool_calling_results))
+                    logger.info(
+                        "Starting enhanced tool parsing and knowledge extraction..."
+                    )
+
+                    # 1. Convert raw results to BasicToolResult
+                    basic_results = []
+                    for i, res in enumerate(tool_calling_results):
+                        sub_q = (
+                            tool_and_input_list[i]["item"]
+                            if i < len(tool_and_input_list)
+                            else question
                         )
+                        basic = parse_tool_result(res, sub_q, iteration)
+                        if basic:
+                            basic_results.append(basic)
+
+                    # 2. Deep Extraction with ToolParseAgent
+                    parsed_results = await self.tool_parse_agent.parse_results(
+                        query, basic_results
                     )
-                    logger.debug("Parsed list: %s", str(parsed_list))
 
-                    compressed_list = await compress_all_llm(
-                        model=self.fast_model,
-                        parsed_list=parsed_list,
-                        limit=3,
-                        query=query,
+                    # Log Execution
+                    if hasattr(self, "trace_logger"):
+                        self.trace_logger.log_phase(
+                            "Execution & Knowledge Extraction", iteration=iteration
+                        )
+                        for parsed in parsed_results:
+                            self.trace_logger.log_tool_execution(
+                                parsed.basic.tool_name,
+                                parsed.basic.raw_payload
+                                if hasattr(parsed.basic, "raw_payload")
+                                else {}, 
+                                parsed.basic.raw_text,
+                                parsed.basic.success,
+                            )
+                            # Log extracted knowledge
+                            if parsed.summary:
+                                self.trace_logger.log_knowledge_update(
+                                    f"**Summary from {parsed.basic.tool_name}**:\n{parsed.summary}"
+                                )
+                            if parsed.evidence_entries:
+                                details = "\n".join(
+                                    [
+                                        f"- {e.detailed_findings}"
+                                        for e in parsed.evidence_entries
+                                        if e.detailed_findings
+                                    ]
+                                )
+                                if details:
+                                    self.trace_logger.log_knowledge_update(
+                                        f"**Detailed Findings**:\n{details}", priority=2
+                                    )
+
+                    # 3. Update Bibliography & Context
+                    for parsed in parsed_results:
+                        # Add to bibliography
+                        for entry in parsed.evidence_entries:
+                            bib_entry = BibliographyEntry(
+                                key=entry.hash_value,
+                                title=entry.title or "Untitled",
+                                url=entry.url,
+                                doi=entry.doi,
+                                authors=entry.authors,
+                                year=entry.year,
+                                fetched_at=datetime.now().isoformat(),
+                                first_seen_round=iteration,
+                            )
+                            self.bibliography.add_or_update(bib_entry)
+
+                            # Add to reference pool (for backward compatibility and final report)
+                            if entry.url:
+                                self.ref_pool.add(entry.title, "", entry.url)
+                                self.all_links_of_system.append(entry.url)
+
+                        # Add to ResearchContext (Memory Compression)
+                        # Priority 1: The summary generated by the agent
+                        if parsed.summary:
+                            self.research_context.add_knowledge(
+                                f"Source: {parsed.basic.tool_name}\nSummary: {parsed.summary}",
+                                priority=1,
+                            )
+
+                        # Priority 2: Detailed findings and key sentences
+                        for entry in parsed.evidence_entries:
+                            content_block = []
+                            if entry.detailed_findings:
+                                content_block.append(
+                                    f"Detailed Findings: {entry.detailed_findings}"
+                                )
+                            if entry.key_sentences:
+                                content_block.append(
+                                    f"Key Points: {'; '.join(entry.key_sentences)}"
+                                )
+
+                            if content_block:
+                                self.research_context.add_knowledge(
+                                    f"Evidence from {entry.title}:\n"
+                                    + "\n".join(content_block),
+                                    priority=2,
+                                )
+
+                    # ------------------------------------------------------------------
+                    # Report-only: build a persistent candidate pool (HGNC-like symbols),
+                    # then validate a small batch with structured target tools.
+                    # This supports long-tail "signal rescue" without affecting benchmarks.
+                    # ------------------------------------------------------------------
+                    if self.is_report:
+                        try:
+                            # Harvest raw text from selected tool outputs (high recall)
+                            harvest_texts: list[str] = []
+                            for parsed in parsed_results:
+                                if parsed.basic.tool_name in {
+                                    "paper_search",
+                                    "tavily_search",
+                                    "search_assay",
+                                    "search_activity",
+                                }:
+                                    harvest_texts.append(parsed.basic.raw_text or "")
+                                    if parsed.summary:
+                                        harvest_texts.append(parsed.summary)
+                                    for e in parsed.evidence_entries[:10]:
+                                        if e.detailed_findings:
+                                            harvest_texts.append(e.detailed_findings)
+                                        if e.key_sentences:
+                                            harvest_texts.extend(e.key_sentences[:5])
+
+                            regex_syms = self._extract_candidate_symbols_regex(
+                                harvest_texts
+                            )
+                            regex_syms = self._hard_filter_candidate_symbols(regex_syms)
+                            cleaned_syms = await self._clean_candidate_symbols_llm(
+                                regex_syms
+                            )
+                            cleaned_syms = self._hard_filter_candidate_symbols(
+                                cleaned_syms
+                            )
+
+                            # Update persistent pool
+                            for s in cleaned_syms:
+                                self._candidate_symbols.add(s)
+                                # Update stats (per iteration, per source tool) to rank candidates later
+                                self._update_candidate_stats(
+                                    s, parsed.basic.tool_name, iteration
+                                )
+
+                            pool_list = self._get_ranked_candidate_pool()
+                            expansion_added: list[str] = []
+
+                            # Report-only: LLM divergence step (optional).
+                            # This expands the pool with hypothesis candidates inspired by the current pool and user intent.
+                            # It does not affect benchmarks and does not guarantee correctness; validation loop will handle it.
+                            if self.enable_llm_prescreen:
+                                try:
+                                    proposed = (
+                                        await self._propose_additional_candidates_llm(
+                                            query=query,
+                                            symbols=pool_list,
+                                            k=min(
+                                                8, max(0, self.candidate_pool_max // 50)
+                                            ),
+                                        )
+                                    )
+                                    if proposed:
+                                        expansion_added = list(proposed)
+                                        for s in proposed:
+                                            self._candidate_symbols.add(s)
+                                            self._update_candidate_stats(
+                                                s, "llm_expansion", iteration
+                                            )
+                                        pool_list = self._get_ranked_candidate_pool()
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Report-only LLM expansion step failed: {e}"
+                                    )
+
+                            # Report-only: pool profiling (classification + gap-fill queries) to guide next planning.
+                            pool_profile: dict = {}
+                            if (
+                                self.enable_llm_prescreen
+                                and len(pool_list) >= 60
+                                and self._last_pool_profile_iteration != iteration
+                            ):
+                                pool_profile = await self._profile_candidate_pool_llm(
+                                    query=query, symbols=pool_list
+                                )
+                                self._last_pool_profile_iteration = iteration
+                                if pool_profile:
+                                    self.research_context.add_knowledge(
+                                        "[Candidate Pool Profile]\n"
+                                        + json.dumps(pool_profile, ensure_ascii=False),
+                                        priority=1,
+                                    )
+                                    if hasattr(self, "trace_logger"):
+                                        # Keep trace concise: counts + number of suggested queries
+                                        bc = pool_profile.get("bucket_counts", {})
+                                        gq = pool_profile.get("gap_fill_queries", [])
+                                        self.trace_logger.log_knowledge_update(
+                                            f"**[Candidate Pool Profile]** buckets={bc} gap_fill_queries={len(gq) if isinstance(gq, list) else 0}",
+                                            priority=1,
+                                        )
+
+                            # Optional: conservative LLM prescreen to choose which symbols to validate next.
+                            # This does NOT delete anything from the global pool; it only prioritizes validation.
+                            if (
+                                self.enable_llm_prescreen
+                                and self.validation_batch_size > 0
+                            ):
+                                # Build a deterministic, intent-aligned short-list for prescreening:
+                                # prioritize unvalidated symbols by recency/frequency (generic; no family-prefix heuristics).
+                                shortlist = [
+                                    s
+                                    for s in pool_list
+                                    if s not in self._validated_symbols
+                                ]
+                                shortlist.sort(
+                                    key=lambda s: (
+                                        -int(
+                                            self._candidate_stats.get(s, {}).get(
+                                                "last_seen", -1
+                                            )
+                                        ),
+                                        -int(
+                                            self._candidate_stats.get(s, {}).get(
+                                                "count", 0
+                                            )
+                                        ),
+                                        s,
+                                    )
+                                )
+                                shortlist = shortlist[
+                                    : max(
+                                        50, min(len(shortlist), self.candidate_pool_max)
+                                    )
+                                ]
+
+                                prescreen = (
+                                    await self._prescreen_symbols_for_validation_llm(
+                                        query, shortlist
+                                    )
+                                )
+                                validate_list = (
+                                    prescreen.get("selected", [])
+                                    or shortlist[: self.validation_batch_size]
+                                )
+                                excluded = prescreen.get(
+                                    "deprioritized", prescreen.get("excluded", [])
+                                )
+                                drop = prescreen.get("drop", [])
+                            else:
+                                shortlist = [
+                                    s
+                                    for s in pool_list
+                                    if s not in self._validated_symbols
+                                ]
+                                shortlist.sort(
+                                    key=lambda s: (
+                                        -int(
+                                            self._candidate_stats.get(s, {}).get(
+                                                "last_seen", -1
+                                            )
+                                        ),
+                                        -int(
+                                            self._candidate_stats.get(s, {}).get(
+                                                "count", 0
+                                            )
+                                        ),
+                                        s,
+                                    )
+                                )
+                                validate_list = shortlist[: self.validation_batch_size]
+                                excluded = []
+                                drop = []
+
+                            # High-confidence drop (report-only): remove only tokens the LLM is extremely sure are NOT genes.
+                            # This is a speed optimization. It should be conservative to avoid losing long-tail candidates.
+                            if drop:
+                                for s in drop:
+                                    self._candidate_symbols.discard(s)
+                                    self._validated_symbols.discard(s)
+                                    try:
+                                        self._pinned_symbols.discard(s)
+                                    except Exception:
+                                        pass
+                                    self._candidate_stats.pop(s, None)
+                                pool_list = self._get_ranked_candidate_pool()
+
+                            # Validate only symbols we haven't validated before (cache)
+                            validate_list = [
+                                s
+                                for s in validate_list
+                                if s not in self._validated_symbols
+                            ]
+                            # Pin selected symbols so they won't be evicted by candidate_pool_max truncation later.
+                            # This keeps long-tail candidates "alive" in logs and downstream reasoning once they enter validation.
+                            if validate_list:
+                                try:
+                                    self._pinned_symbols.update(
+                                        [
+                                            s
+                                            for s in validate_list
+                                            if isinstance(s, str) and s
+                                        ]
+                                    )
+                                except Exception:
+                                    pass
+                            if validate_list:
+                                validations = await self._validate_candidate_symbols(
+                                    validate_list
+                                )
+                                for v in validations:
+                                    sym = v.get("symbol")
+                                    if isinstance(sym, str) and sym:
+                                        self._validated_symbols.add(sym)
+                                        try:
+                                            self._pinned_symbols.add(sym)
+                                        except Exception:
+                                            pass
+                            else:
+                                validations = []
+
+                            # Write a compact, reusable block into Memory Bank
+                            self.research_context.add_knowledge(
+                                "[Candidate Pool]\n"
+                                f"HGNC-like symbols (cap={self.candidate_pool_max}): {pool_list}\n"
+                                f"llm_expansion_added={expansion_added}\n"
+                                f"[Candidate Pool Prescreen]\nselected_for_validation={validate_list}\nexcluded_obvious={excluded}\ndrop_high_confidence={drop}\n"
+                                "[Candidate Pool Validation]\n"
+                                + json.dumps(validations, ensure_ascii=False),
+                                priority=1,
+                            )
+
+                            # Make it visible in trace logs too (so you can see the pool each run)
+                            if hasattr(self, "trace_logger"):
+                                self.trace_logger.log_knowledge_update(
+                                    f"**[Candidate Pool]** size={len(pool_list)} cap={self.candidate_pool_max}\n\n"
+                                    f"HGNC-like symbols (cap={self.candidate_pool_max}): {pool_list}\n"
+                                    f"Selected_for_validation={validate_list}\n"
+                                    f"Excluded_obvious={excluded}\n",
+                                    priority=1,
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Report-only candidate pool/validation failed: {e}"
+                            )
+
+                    logger.info(
+                        f"important info stream in iteration{iteration} for process 4: Enhanced parsing completed"
                     )
-                    logger.debug("Compressed list: %s", str(compressed_list))
-                    fullquery_tool_results.extend(compressed_list)
-
-
-                    logger.info(f"important info stream in iteration{iteration} for process 4: compressed_list for subquery (knowledge compress agent)")
-                    logger.info(f"important info stream in iteration{iteration} for process 4: subquery  (knowledge compress agent): {question}")   
-                    logger.info(f"important info stream in iteration{iteration} for process 4: compressed_list  (knowledge compress agent): {compressed_list}")   
+                    logger.info(
+                        f"Current context length: {len(self.research_context.current_knowledge)} chars"
+                    )
 
                 except Exception as e:
-                    logger.warning("Error during parsing tool results: %s", str(e))
+                    logger.warning(f"Error during enhanced parsing: {e}", exc_info=True)
 
-                logger.info("fullquery_tool_results: %s", str(fullquery_tool_results))
                 logger.info(
                     "Questions by iteration: %s", str(self.questions_by_iteration)
                 )
 
             iteration += 1
-            facts, refs_raw = [], []
-            for item in fullquery_tool_results:
-                facts.extend(item.get("extracted_facts", []))
-                refs_raw.extend(item.get("references", []))
 
-            def _to_str(x):
-                if x is None:
-                    return ""
-                if isinstance(x, (list, tuple)):
-                    x = x[0] if x else ""
-                return str(x).strip()
+            # Update current_knowledge from ResearchContext
+            # This replaces the old process_multiple_knowledge_chunks logic
+            current_knowledge = self.research_context.current_knowledge
 
-            unique_refs: dict[str, dict] = {}
-            for ref in refs_raw:
-                ref["url"]         = _to_str(ref.get("url"))
-                ref["description"] = _to_str(ref.get("description"))
-                ref["apa_citation"] = _to_str(ref.get("apa_citation"))
-
-                url = ref["url"]
-                if not url or not url.startswith("http"):
-                    continue         
-                if url not in unique_refs:       
-                    unique_refs[url] = ref
-
-            refs = list(unique_refs.values())
-            urls = [r["url"] for r in refs]
-            self.all_links_of_system.extend(urls)
-
-            facts_md = (
-                "\n".join(f"- **Fact**: {f}" for f in facts)
-                if facts
-                else "*No explicit facts extracted.*"
+            logger.info(
+                f"important info stream in for process new: knowledge memory Agent {current_knowledge}"
             )
-
-            logger.info("facts_md")
-            logger.info(facts_md)
-            logger.info("refs")
-            logger.info(refs)
-
-
-            key_info, cleaned_refs = await self._extract_knowledge(
-                facts_md=facts_md, refs_in_round=refs
-            )
-
-            self.knowledge_chunks.append({
-                "question_texts": question_texts,
-                "key_info": key_info
-            })
-
-            logger.info(f"knowledge_chunks")
-            logger.info(self.knowledge_chunks)
-
-            current_knowledge = await self.process_multiple_knowledge_chunks(query,key_info)
-            
-
-            for ref in cleaned_refs:
-                idx = self.ref_pool.add(
-                    title=ref.get("description")
-                    or ref.get("apa_citation")
-                    or ref["url"],
-                    citation=ref.get("apa_citation", ""),
-                    link=ref["url"],
-                )
-                current_knowledge = current_knowledge.replace(ref["url"], f"[{idx}]")
-
-            logger.info(f"important info stream in for process new: knowledge memory Agent {current_knowledge}")   
-
 
             # Send Analysis & Strategy Refinement (only if not the last iteration)
             logger.info("getting final answer")
@@ -1372,8 +2306,38 @@ class AdvancedSearchSystem:
                 answer_title = "Final Answer"
             else:
                 answer_title = "Critc"
+
+            # Store critic output in ResearchContext with high priority to prevent compression loss
+            # This ensures anomalies identified by critic are preserved as "residual connections"
+            if not (iteration >= self.max_iterations):
+                # Extract Thoughts section (contains anomaly detection)
+                thoughts_match = re.search(
+                    r"##\s+Thoughts\s+(.*?)(?=\n##\s+Strategy|\n##\s+References|\Z)",
+                    final_answer,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                if thoughts_match:
+                    thoughts_text = thoughts_match.group(1).strip()
+                    # Add as Priority 1 to ensure it survives compression
+                    self.research_context.add_knowledge(
+                        f"[Critic Reflection - Iteration {iteration}]\n{thoughts_text}",
+                        priority=1,
+                    )
+                    logger.info(
+                        f"Added critic thoughts to ResearchContext with Priority 1"
+                    )
+
+            # Log Answer/Critic
+            if hasattr(self, "trace_logger"):
+                self.trace_logger.log_phase(answer_title, iteration=iteration)
+                self.trace_logger.log_agent_activity(
+                    "Critic/Writer",
+                    "Generate answer based on accumulated knowledge...",  # Prompt is too long to repeat here
+                    final_answer,
+                )
+
             if self.verbose:
-                with open(self.mid_path , "a", encoding="utf-8") as f:
+                with open(self.mid_path, "a", encoding="utf-8") as f:
                     f.write(f"\n {answer_title} : \n")
                     f.write(f"\n {final_answer} \n")
 
@@ -1391,12 +2355,18 @@ class AdvancedSearchSystem:
                 )
                 if self.verbose:
                     print(f"writing final report in{self.report_path}")
-                    with open(self.report_path , "a", encoding="utf-8") as f:
+                    with open(self.report_path, "a", encoding="utf-8") as f:
                         f.write(f"Query : {query} : \n")
                         f.write(f"\n {final_report} \n")
 
             except Exception as e:
                 logger.warning(f"Warning: Failed to generate detailed report: {e}")
+
+        # Save Final Case JSON
+        if hasattr(self, "trace_logger"):
+            if final_report:
+                self.trace_logger.case_data["final_report"] = final_report
+            self.trace_logger.save_case_json()
 
         current_knowledge = final_answer
         return {

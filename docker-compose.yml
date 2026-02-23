@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  origene:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: origene
+    image: origene:latest
+    
+    # Environment configuration
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/src
+    
+    # Mount configuration file and data directories
+    volumes:
+      # Mount secrets configuration (required)
+      - ./src/local_deep_research/_settings/.secrets.toml:/app/src/local_deep_research/_settings/.secrets.toml:ro
+      
+      # Mount logs directory for output
+      - ./logs:/app/logs
+      
+      # Mount cache directory for embeddings
+      - ./cache:/app/cache
+      
+      # Optional: mount benchmark data if needed
+      - ./src/benchmark:/app/src/benchmark:ro
+    
+    # Network configuration
+    network_mode: bridge
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    
+    # Default command: run interactive mode
+    # Override with docker-compose run origene <command>
+    command: /app/src/.venv/bin/python -m local_deep_research.main
+    
+    # Interactive mode for CLI usage
+    stdin_open: true
+    tty: true
+
+# Optional: Add OrigeneMCP service if deploying together
+# Uncomment below if you want to deploy both OriGene and OrigeneMCP together
+#
+#  origene-mcp:
+#    image: origene-mcp:latest
+#    container_name: origene-mcp
+#    ports:
+#      - "8789:8789"
+#    volumes:
+#      - ./mcp-config:/app/config
+#    restart: unless-stopped
+#    networks:
+#      - origene-network
+#
+#networks:
+#  origene-network:
+#    driver: bridge

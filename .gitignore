@@ -1,0 +1,4 @@
+**/.secrets.toml
+logs/
+cache/
+.DS_Store

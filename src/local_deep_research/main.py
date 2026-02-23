@@ -2,13 +2,13 @@ import argparse
 import asyncio
 import logging
 import sys
+import os
+import time
+from datetime import datetime
 from typing import Dict
 
 from .config import settings
 from .search_system import AdvancedSearchSystem
-
-
-
 
 
 async def run_research(query: str, mode: str = "quick"):
@@ -17,22 +17,50 @@ async def run_research(query: str, mode: str = "quick"):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     logger.info(f"\n🔬 Starting {mode} research for query: {query}")
+    
+    # Create session log directory
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_log_dir = os.path.join(project_root, "logs", run_ts)
+    if not os.path.exists(session_log_dir):
+        os.makedirs(session_log_dir, exist_ok=True)
+    print(f"Session logs will be saved to: {session_log_dir}")
 
     if mode == "quick":
         print("\nResearching... This may take a few minutes.\n")
         system = AdvancedSearchSystem(max_iterations=settings.quick.iteration, 
                                       questions_per_iteration=settings.quick.questions_per_iteration,
-                                      is_report = False)
+                                      is_report = False,
+                                      session_log_dir=session_log_dir)
     else:
         print(
             "\nGenerating detailed report...  Please be patient as this enables deeper analysis.\n"
         )
         system = AdvancedSearchSystem(max_iterations=settings.detailed.iteration, 
                                       questions_per_iteration=settings.detailed.questions_per_iteration,
-                                      is_report = True)
+                                      is_report = True,
+                                      session_log_dir=session_log_dir)
     await system.initialize()
-    results = await system.analyze_topic(query)
+    
+    # Use 'single_run' or similar as ID for manual runs
+    results = await system.analyze_topic(query, question_id="manual_run")
     print("Research analysis completed")
+    
+    # Also ensure index.csv is created for consistency
+    import csv
+    csv_path = os.path.join(session_log_dir, "index.csv")
+    full_trace = os.path.abspath(os.path.join(session_log_dir, f"trace_manual_run_full.md"))
+    clean_trace = os.path.abspath(os.path.join(session_log_dir, f"trace_manual_run_clean.md"))
+    case_json = os.path.abspath(os.path.join(session_log_dir, f"case_manual_run.json"))
+    
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['id', 'status', 'query', 'answer', 'full_trace', 'clean_trace', 'case_json'])
+        # Truncate answer
+        answer = results.get("current_knowledge", "")
+        csv_answer = answer[:1000] + "..." if len(answer) > 1000 else answer
+        writer.writerow(['manual_run', 'success', query, csv_answer, full_trace, clean_trace, case_json])
+        
     return results
 
 
@@ -73,12 +101,15 @@ async def main():
         print("2) Detailed Report (More time, generates comprehensive report with deep analysis)"
         )
         choice = input("Enter number (1 or 2): ").strip()
-
+        if choice in ("quit", "q", "exit"):
+            break
         while choice not in ["1", "2"]:
             print("\nInvalid input. Please enter 1 or 2:")
             print("1) Analysis (Few minutes, answer questions, summarize findings)")
             print("2) Detailed Report (More time, generates comprehensive report with deep analysis)")
             choice = input("Enter number (1 or 2): ").strip()
+            if choice in ("quit", "q", "exit"):
+                break
         query = input("\nEnter your research query: ").strip()
 
         if query.lower() == "quit":

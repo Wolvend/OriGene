@@ -2,30 +2,79 @@ import asyncio
 import json
 import logging
 import os
-import urllib
+import urllib.parse
 from datetime import datetime
+from typing import Any, Dict, List
 
 from langchain_openai import ChatOpenAI
 
-# from .connect_mcp import connect_mcp
 from .utils import exact_match_entity_type, extract_and_convert_dict
 from .utilties.search_utilities import (
     write_log_process_safe, write_json_log_process_safe
 )
+
+logger = logging.getLogger(__name__)
+
+
+def convert_search_patent_input(tool_input: dict) -> dict:
+    try:
+        if "field" in tool_input and "value" in tool_input:
+            logger.info(f"search_patent parameters have been correctly formatted, no conversion needed: {tool_input}")
+            return tool_input
+
+        query = tool_input.get("query", "")
+        if not query:
+            if "target" in tool_input:
+                query = tool_input["target"]
+            elif "patent_name" in tool_input:
+                query = tool_input["patent_name"]
+            elif "related_diseases" in tool_input:
+                query = tool_input["related_diseases"]
+            elif "moa" in tool_input:
+                query = tool_input["moa"]
+            else:
+                logger.warning("Missing query content for search_patent tool")
+                return tool_input
+
+        processed_input = {"field": "target", "value": query}
+        logger.info(f"search_patent parameters intelligent conversion completed: {tool_input} -> {processed_input}")
+        return processed_input
+
+    except Exception as e:
+        logger.error(f"Error occurred while processing search_patent parameters: {e}")
+        return tool_input
+
+
+tool_input_convert_map = {
+    "search_patent": convert_search_patent_input,
+    # Normalize parameter naming for OpenTargets-like target tools
+    # (These MCP tools expect `target_name`, but the selector sometimes emits `name` or `query` or a raw string.)
+    "get_target_gene_ontology_by_name": lambda x: {"target_name": x.get("target_name") or x.get("name") or x.get("query") or ""} if isinstance(x, dict) else {"target_name": str(x)},
+    "get_target_classes_by_name": lambda x: {"target_name": x.get("target_name") or x.get("name") or x.get("query") or ""} if isinstance(x, dict) else {"target_name": str(x)},
+    "get_associated_diseases_phenotypes_by_target_name": lambda x: {"target_name": x.get("target_name") or x.get("name") or x.get("query") or ""} if isinstance(x, dict) else {"target_name": str(x)},
+    # Normalize ontology tool input. Avoid wildcard patterns that can trigger 400 in Ensembl REST.
+    "get_ontology_name": lambda x: (
+        {"name": (x.get("name") or x.get("query") or x.get("term") or "").replace("*", "").strip()}
+        if isinstance(x, dict)
+        else {"name": str(x).replace("*", "").strip()}
+    ),
+}
+
 
 class ToolExecutor:
     """
     Execute the tools according to the tool calling input.
     """
 
-    def __init__(self, mcp_client, error_log_path, llm_light):
+    def __init__(self, mcp_client, error_log_path, llm_light, max_concurrent: int = 6):
         self.mcp_client = mcp_client
         self.tool_map = mcp_client.mcp_tool_map
         self.error_log_path = error_log_path
         self.execution_failed_log_path = os.path.join(os.path.dirname(error_log_path), "execution_failed_tools.json")
         self.llm_light = llm_light
+        self.semaphore = asyncio.Semaphore(max_concurrent)
         
-    async def execute_tool_with_timeout(self, tool_invoke_info, timeout=180.0, max_retries=3):
+    async def execute_tool_with_timeout(self, tool_invoke_info, timeout=150.0, max_retries=2):
         for attempt in range(max_retries):
             try:
                 tool_calling_result = await asyncio.wait_for(
@@ -72,73 +121,70 @@ class ToolExecutor:
         """
         Execute single tool.
         """
-        
-        # 1. Get tool from tool_map
+        tool_name = tool_invoke_info.get("tool", "")
+        tool_input = tool_invoke_info.get("tool_input", {})
+
+        # Best-effort normalization for known schema mismatches before calling MCP tools
+        converter = tool_input_convert_map.get(tool_name)
+        if converter:
+            try:
+                tool_input = converter(tool_input)
+                tool_invoke_info = {**tool_invoke_info, "tool_input": tool_input}
+            except Exception as e:
+                logging.error(f"Tool input convert failed for {tool_name}: {e}. tool_input={tool_input}")
+
+        # Guardrail: don't call tools with null/empty inputs (common LLM failure mode).
+        if tool_input is None:
+            raise ValueError(f"Tool input is None for {tool_name}")
+        if isinstance(tool_input, str) and tool_input.strip().lower() in {"null", "none", ""}:
+            raise ValueError(f"Tool input is empty/null string for {tool_name}")
+        if isinstance(tool_input, dict):
+            # Drop empty-string values
+            cleaned = {k: v for k, v in tool_input.items() if not (isinstance(v, str) and v.strip() == "")}
+            tool_input = cleaned
+            tool_invoke_info = {**tool_invoke_info, "tool_input": tool_input}
+            if len(tool_input) == 0:
+                raise ValueError(f"Tool input is empty dict for {tool_name}")
+        if isinstance(tool_input, list) and len(tool_input) == 0:
+            raise ValueError(f"Tool input is empty list for {tool_name}")
+
         try:
-            tool = self.tool_map.get(tool_invoke_info["tool"])
+            tool = self.tool_map.get(tool_name)
         except Exception as e:
             logging.error(f"Error accessing tool_map: {e}")
-            # raise e
 
-        # 2. If tool not found, log and set error result
         if tool is None:
-            try:
-                logging.info(
-                    f"Tool {tool_invoke_info.get('tool', 'Unknown')} not found in the tool pool(with {len(self.tool_map)} tools available)."
-                )
-                result = f"Error: Tool {tool_invoke_info.get('tool', 'Unknown')} not found in the tool pool(with {len(self.tool_map)} tools available)."
-            except Exception as e:
-                logging.error(f"Error logging tool not found: {e}")
-                # raise e
-        else:
-            # 3. Prepare tool input and invoke tool
-            try:
-                tool_input = tool_invoke_info["tool_input"]
-            except Exception as e:
-                logging.error(f"Error extracting tool_input: {e}")
-                raise e
-
-            try:
-                logging.info(
-                    f"Executing tool: {getattr(tool, 'name', 'Unknown')} with input: {tool_input}"
-                )
-            except Exception as e:
-                logging.error(f"Error logging tool execution: {e}")
-                raise e
-
-            # 4. Invoke tool with try/except
-            try:
-                result = await tool.ainvoke(tool_input)
-            except Exception as e:
-                logging.error(f"Error invoking tool {getattr(tool, 'name', 'Unknown')}, tool_input: {tool_input}, tool_invoke_info: {tool_invoke_info}, error: {e}")
-                raise e
-
-        # 5. Get tool_name with try/except
+            logging.info(
+                f"Tool {tool_name} not found in the tool pool(with {len(self.tool_map)} tools available)."
+            )
+        
         try:
-            tool_name = tool_invoke_info.get("tool", "")
-            if tool_name:
-                try:
-                    tool_name = exact_match_entity_type(tool_name, list(self.tool_map.keys()))
-                except Exception as e:
-                    logging.error(f"Error in exact_match_entity_type: {e}")
-                    tool_name = tool_invoke_info.get("tool", "")
-            else:
-                raise Exception("Tool name is empty")
+            logging.info(f"Executing tool: {tool_name} with input: {tool_input}")
         except Exception as e:
-            logging.error(f"Error extracting tool_name: {e}")
+            logging.error(f"Error logging tool execution: {e}")
+
+        try:
+            # Use the new call_tool method we added to OrigeneMCPToolClient
+            result = await self.mcp_client.call_tool(tool_name, tool_input)
+        except Exception as e:
+            logging.error(f"Error invoking tool {tool_name}, tool_input: {tool_input}, tool_invoke_info: {tool_invoke_info}, error: {e}")
             raise e
 
-        # 6. Get tool_source with try/except
         try:
             tool_source = self.mcp_client.tool2source.get(tool_name, "Unknown")
         except Exception as e:
             logging.error(f"Error extracting tool_source: {e}")
-            raise e
+            tool_source = "Unknown"
 
-        # 7. Build tool_calling_result with try/except
         try:
             tool_calling_result = {
-                "content": str(result),
+                # IMPORTANT: str(list/dict) is not valid JSON (single quotes), and will break downstream parsers.
+                # Persist a JSON string when possible so ToolResultParser can json.loads reliably.
+                "content": (
+                    json.dumps(result, ensure_ascii=False)
+                    if isinstance(result, (dict, list))
+                    else str(result)
+                ),
                 "tool_name": tool_name,
                 "toolsuite": tool_source,
                 "success": self.judge_output_is_meaningful(result)
@@ -147,7 +193,6 @@ class ToolExecutor:
             logging.error(f"Error building tool_calling_result: {e}")
             raise e
 
-        # 8. Extract additional info with try/except
         try:
             tool_calling_result = self.extract_additional_info(tool_calling_result)
         except Exception as e:
@@ -156,10 +201,25 @@ class ToolExecutor:
 
         return tool_calling_result
 
+    def _preprocess_tool_calls(self, tool_invoke_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        processed_tool_invoke_list = []
+
+        for tool_invoke_info in tool_invoke_list:
+            processed_tool_invoke_info = {**tool_invoke_info}
+            tool_name = tool_invoke_info.get("tool")
+            if not tool_name:
+                logger.error("tool name is None")
+                continue
+            tool_input = tool_invoke_info.get("tool_input")
+            converter = tool_input_convert_map.get(tool_name)
+            if converter:
+                new_tool_input = converter(tool_input)
+                processed_tool_invoke_info["tool_input"] = new_tool_input
+                logger.info(f"{tool_name} Parameter preprocessing completed: {tool_input} -> {new_tool_input}")
+            processed_tool_invoke_list.append(processed_tool_invoke_info)
+        return processed_tool_invoke_list
+
     def extract_additional_info(self, tool_calling_result):
-        """
-        Extract the additional information from the tool calling result.
-        """
         try:
             result = tool_calling_result.get("content", {})
         
@@ -258,10 +318,15 @@ Return data in python dict format as follows:
         """
         Execute the tools.
         """
+        processed_list = self._preprocess_tool_calls(tool_invoke_list)
+
+        async def _bounded_execute(info):
+            async with self.semaphore:
+                return await self.execute_tool_with_timeout(info)
+
         execute_tasks = [
-            self.execute_tool_with_timeout(tool_invoke_info) for tool_invoke_info in tool_invoke_list
+            _bounded_execute(info) for info in processed_list
         ]
         tool_calling_results = await asyncio.gather(*execute_tasks)
-        self.log_execution_failed_tool(tool_invoke_list, tool_calling_results)
+        self.log_execution_failed_tool(processed_list, tool_calling_results)
         return tool_calling_results
-
