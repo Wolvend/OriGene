@@ -61,9 +61,9 @@ uv run -m deploy.web
 ```
 
 **Note:** 
-- The MCP server runs on port **8789** by default. If this port is occupied, modify the port in `local.conf.toml`.
+- The MCP server runs on port **8788** by default. If this port is occupied, modify the port in `local.conf.toml`.
 - Keep the MCP server running in a separate terminal while using OriGene.
-- The server endpoint will be `http://127.0.0.1:8789` (or your custom port).
+- The server endpoint will be `http://127.0.0.1:8788` (or your custom port).
 
 For more detailed information about OrigeneMCP deployment and usage, please refer to the [OrigeneMCP repository](https://github.com/GENTEL-lab/OrigeneMCP.git).
 
@@ -163,12 +163,12 @@ Or step by step:
 
    ```toml
    [mcp]          
-   server_url = "http://host.docker.internal:8789"
+   server_url = "http://host.docker.internal:8788"
    ```
 
    > **MCP Server Access in Docker**: Since OriGene runs inside a Docker container, it cannot use `127.0.0.1` to reach the host MCP server. Update the MCP server URL as follows:
-   > - For Mac/Windows: Use `http://host.docker.internal:8789`
-   > - For Linux: Use `http://172.17.0.1:8789`
+   > - For Mac/Windows: Use `http://host.docker.internal:8788`
+   > - For Linux: Use `http://172.17.0.1:8788`
    > - Or deploy MCP in Docker and use service name
 
 3. **Build and verify environment:**
@@ -245,7 +245,7 @@ If you prefer native installation without Docker, follow the instructions below.
 
    ```toml
    [mcp]          
-   server_url = "http://127.0.0.1:8789"  # Use your actual MCP server URL and port
+   server_url = "http://127.0.0.1:8788"  # Use your actual MCP server URL and port
    ```
 
    If you changed the port during MCP deployment, make sure to update the `server_url` accordingly.

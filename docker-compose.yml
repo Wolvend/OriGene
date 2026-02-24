@@ -58,7 +58,7 @@ services:
 #    image: origene-mcp:latest
 #    container_name: origene-mcp
 #    ports:
-#      - "8789:8789"
+#      - "8788:8788"
 #    volumes:
 #      - ./mcp-config:/app/config
 #    restart: unless-stopped
